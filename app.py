@@ -18,21 +18,27 @@ df = load_data()
 
 st.set_page_config(page_title="Edu-Dash Nigeria", page_icon="🇳🇬", layout="wide")
 
-# --- 2. SIDEBAR NAVIGATION ---
+# --- 2. SIDEBAR ---
 with st.sidebar:
     st.title("🇳🇬 Edu-Dash")
-    role = st.radio("Access Level:", ["✍️ Student", "👨‍👩‍👧 Parent", "👨‍🏫 Teacher"])
+    role = st.radio("Who is using the app?", ["✍️ Student", "👨‍🏫 Teacher", "👨‍👩‍👧 Parent"])
     st.divider()
+    if role == "👨‍🏫 Teacher":
+        pwd = st.text_input("Teacher Password:", type="password")
+        if pwd != "Lagos2026": # You can change this password!
+            st.warning("Please enter the correct password to access Teacher tools.")
+            st.stop()
 
 # --- 3. STUDENT VIEW ---
 if role == "✍️ Student":
-    tab1, tab2 = st.tabs(["📝 Take Exam", "📚 Study Materials"])
+    tab1, tab2 = st.tabs(["📝 Practice Quiz", "📚 Study Materials"])
     
     with tab1:
-        st.header("Exam Practice Portal")
-        name = st.text_input("Full Name:", key="std_name")
-        sel_exam = st.selectbox("Exam:", ["BECE", "WAEC", "JAMB"])
-        sel_subj = st.selectbox("Subject:", ["Mathematics", "English", "Biology"])
+        st.header("National Practice Portal")
+        name = st.text_input("Student Name:", placeholder="Type your full name")
+        col1, col2 = st.columns(2)
+        with col1: sel_exam = st.selectbox("Exam:", ["BECE", "WAEC", "JAMB"])
+        with col2: sel_subj = st.selectbox("Subject:", ["Mathematics", "English", "Biology"])
         
         if st.button("🚀 Start Exam"):
             st.session_state.exam_start = time.time()
@@ -40,68 +46,71 @@ if role == "✍️ Student":
             st.session_state.q_idx = 0
 
         if name and 'exam_start' in st.session_state:
-            # Quiz Logic
+            # Exam Logic
             quiz_df = df[(df['Exam'].astype(str).str.upper().isin(['BECE', 'BESE'])) & (df['Subject'] == sel_subj)]
             if not quiz_df.empty:
                 q = quiz_df.iloc[st.session_state.q_idx % len(quiz_df)]
                 st.subheader(f"Question {st.session_state.q_idx + 1}")
                 st.write(q['Question'])
-                ans = st.radio("Select Answer:", [q['A'], q['B'], q['C'], q['D']], key=f"q_{st.session_state.q_idx}")
+                ans = st.radio("Choose:", [q['A'], q['B'], q['C'], q['D']], key=f"std_{st.session_state.q_idx}")
                 
-                if st.button("Submit"):
+                if st.button("Submit Answer"):
                     col = 'Correct_Answee' if 'Correct_Answee' in q else 'Correct_Answer'
                     if str(ans).strip() == str(q[col]).strip():
                         st.success("Correct! 🎉")
                         st.session_state.score += 1
                         supabase.table("leaderboard").upsert({"name": name, "score": st.session_state.score}, on_conflict="name").execute()
-                    else:
-                        st.error(f"Wrong. Answer: {q[col]}")
-                        if 'Explanation' in q and pd.notna(q['Explanation']):
-                            st.info(f"💡 Explanation: {q['Explanation']}")
+                    else: st.error(f"Wrong! Answer: {q[col]}")
                 
-                if st.button("Next ➡️"):
+                if st.button("Next Question ➡️"):
                     st.session_state.q_idx += 1
                     st.rerun()
 
+        # LEADERBOARD (Back for Students!)
+        st.divider()
+        st.subheader("🏆 National Leaderboard")
+        try:
+            res = supabase.table("leaderboard").select("name, score").order("score", desc=True).limit(10).execute()
+            if res.data: st.dataframe(pd.DataFrame(res.data), use_container_width=True)
+        except: st.write("Updating scores...")
+
     with tab2:
-        st.header("Digital Library")
-        st.write("Download notes and past questions below:")
-        # You can add real links to your Google Drive here
-        materials = {
-            "Mathematics": "https://google.com/search?q=WAEC+Maths+Notes",
-            "English": "https://google.com/search?q=BECE+English+Past+Questions",
-            "Biology": "https://google.com/search?q=JAMB+Biology+Syllabus"
-        }
-        for sub, link in materials.items():
-            st.link_button(f"📖 Download {sub} Study Guide", link)
+        st.header("Study Materials")
+        st.info("Find links to notes and PDFs below:")
+        # This part reads from your Google sheet if you add a 'Link' column there
+        st.write("📖 [Mathematics BECE Guide](https://google.com)") 
+        st.write("📖 [English Grammar Notes](https://google.com)")
 
-# --- 4. PARENT VIEW ---
-elif role == "👨‍👩‍👧 Parent":
-    st.header("Parental Monitoring Dashboard")
-    search_name = st.text_input("Enter Child's Full Name:")
-    if search_name:
-        res = supabase.table("leaderboard").select("*").eq("name", search_name).execute()
-        if res.data:
-            st.metric(label=f"Current Progress", value=f"{res.data[0]['score']} Points")
-            st.success("✅ Student is active.")
-        else: st.error("No records found.")
-
-# --- 5. TEACHER VIEW ---
+# --- 4. TEACHER VIEW ---
 elif role == "👨‍🏫 Teacher":
-    st.header("Teacher's Admin Dashboard")
+    st.header("Teacher Dashboard")
     
-    # Leaderboard Check
-    st.subheader("📊 Class Performance")
-    try:
-        res = supabase.table("leaderboard").select("name, score").order("score", desc=True).execute()
-        if res.data:
-            st.dataframe(pd.DataFrame(res.data), use_container_width=True)
-    except: st.write("Updating scores...")
+    # 1. Score Management
+    st.subheader("📊 Class Results")
+    res = supabase.table("leaderboard").select("name, score").order("score", desc=True).execute()
+    if res.data:
+        t_df = pd.DataFrame(res.data)
+        st.dataframe(t_df, use_container_width=True)
+        st.download_button("Download Scores", t_df.to_csv(), "results.csv")
 
-    # Question Management Instructions
+    # 2. Material Upload Instruction
     st.divider()
-    st.subheader("⚙️ Manage Questions")
-    st.info("To add more questions, simply update your Google Sheet. The app will refresh automatically!")
+    st.subheader("📤 Upload Materials")
+    st.write("To add new PDFs or notes for students:")
+    st.write("1. Upload file to Google Drive.")
+    st.write("2. Copy the 'Share' link.")
+    st.write("3. Paste it into your Google Sheet under a new 'Materials' column.")
+
+# --- 5. PARENT VIEW ---
+elif role == "👨‍👩‍👧 Parent":
+    st.header("Parental Portal")
+    child = st.text_input("Enter Child's Full Name:")
+    if child:
+        res = supabase.table("leaderboard").select("*").eq("name", child).execute()
+        if res.data:
+            st.metric("Exam Points", f"{res.data[0]['score']}")
+            st.success("Your child is progressing well! ✅")
+        else: st.error("No data found for this name.")
 
 st.divider()
 st.caption("Edu-Dash Nigeria © 2026")
