@@ -16,78 +16,92 @@ def load_data():
 
 df = load_data()
 
-st.set_page_config(page_title="Edu-Dash Nigeria", page_icon="🇳🇬")
-st.title("🇳🇬 Edu-Dash Success Package")
+st.set_page_config(page_title="Edu-Dash Nigeria", page_icon="🇳🇬", layout="wide")
 
-# Exam Duration: 30 Minutes
-TOTAL_TIME = 30 * 60
-
-# --- 2. SIDEBAR ---
+# --- 2. SIDEBAR NAVIGATION ---
 with st.sidebar:
-    st.header("Student Portal")
-    name = st.text_input("Enter Full Name:")
-    sel_exam = st.selectbox("Select Exam:", ["BECE", "WAEC", "JAMB"])
-    sel_subject = st.selectbox("Select Subject:", ["Mathematics", "English", "Biology"])
+    st.title("🇳🇬 Edu-Dash")
+    role = st.radio("Access Level:", ["✍️ Student", "👨‍👩‍👧 Parent", "👨‍🏫 Teacher"])
+    st.divider()
+
+# --- 3. STUDENT VIEW ---
+if role == "✍️ Student":
+    tab1, tab2 = st.tabs(["📝 Take Exam", "📚 Study Materials"])
     
-    if st.button("🚀 Start Timed Exam"):
-        st.session_state.exam_start = time.time()
-        st.session_state.score = 0
-        st.session_state.q_idx = 0
-        st.rerun()
+    with tab1:
+        st.header("Exam Practice Portal")
+        name = st.text_input("Full Name:", key="std_name")
+        sel_exam = st.selectbox("Exam:", ["BECE", "WAEC", "JAMB"])
+        sel_subj = st.selectbox("Subject:", ["Mathematics", "English", "Biology"])
+        
+        if st.button("🚀 Start Exam"):
+            st.session_state.exam_start = time.time()
+            st.session_state.score = 0
+            st.session_state.q_idx = 0
 
-    if 'score' not in st.session_state: st.session_state.score = 0
-    st.metric("Your Points", st.session_state.score)
+        if name and 'exam_start' in st.session_state:
+            # Quiz Logic
+            quiz_df = df[(df['Exam'].astype(str).str.upper().isin(['BECE', 'BESE'])) & (df['Subject'] == sel_subj)]
+            if not quiz_df.empty:
+                q = quiz_df.iloc[st.session_state.q_idx % len(quiz_df)]
+                st.subheader(f"Question {st.session_state.q_idx + 1}")
+                st.write(q['Question'])
+                ans = st.radio("Select Answer:", [q['A'], q['B'], q['C'], q['D']], key=f"q_{st.session_state.q_idx}")
+                
+                if st.button("Submit"):
+                    col = 'Correct_Answee' if 'Correct_Answee' in q else 'Correct_Answer'
+                    if str(ans).strip() == str(q[col]).strip():
+                        st.success("Correct! 🎉")
+                        st.session_state.score += 1
+                        supabase.table("leaderboard").upsert({"name": name, "score": st.session_state.score}, on_conflict="name").execute()
+                    else:
+                        st.error(f"Wrong. Answer: {q[col]}")
+                        if 'Explanation' in q and pd.notna(q['Explanation']):
+                            st.info(f"💡 Explanation: {q['Explanation']}")
+                
+                if st.button("Next ➡️"):
+                    st.session_state.q_idx += 1
+                    st.rerun()
 
-# --- 3. EXAM LOGIC ---
-if not name:
-    st.info("👈 Enter your name and click 'Start Timed Exam'!")
-elif 'exam_start' not in st.session_state:
-    st.warning("👈 Click 'Start Timed Exam' to begin!")
-else:
-    elapsed = time.time() - st.session_state.exam_start
-    remaining = max(0, int(TOTAL_TIME - elapsed))
+    with tab2:
+        st.header("Digital Library")
+        st.write("Download notes and past questions below:")
+        # You can add real links to your Google Drive here
+        materials = {
+            "Mathematics": "https://google.com/search?q=WAEC+Maths+Notes",
+            "English": "https://google.com/search?q=BECE+English+Past+Questions",
+            "Biology": "https://google.com/search?q=JAMB+Biology+Syllabus"
+        }
+        for sub, link in materials.items():
+            st.link_button(f"📖 Download {sub} Study Guide", link)
+
+# --- 4. PARENT VIEW ---
+elif role == "👨‍👩‍👧 Parent":
+    st.header("Parental Monitoring Dashboard")
+    search_name = st.text_input("Enter Child's Full Name:")
+    if search_name:
+        res = supabase.table("leaderboard").select("*").eq("name", search_name).execute()
+        if res.data:
+            st.metric(label=f"Current Progress", value=f"{res.data[0]['score']} Points")
+            st.success("✅ Student is active.")
+        else: st.error("No records found.")
+
+# --- 5. TEACHER VIEW ---
+elif role == "👨‍🏫 Teacher":
+    st.header("Teacher's Admin Dashboard")
     
-    if remaining > 0:
-        st.sidebar.subheader(f"⏳ Time: {remaining//60:02d}:{remaining%60:02d}")
-    else:
-        st.error("🚨 Time is up!")
-        st.stop()
+    # Leaderboard Check
+    st.subheader("📊 Class Performance")
+    try:
+        res = supabase.table("leaderboard").select("name, score").order("score", desc=True).execute()
+        if res.data:
+            st.dataframe(pd.DataFrame(res.data), use_container_width=True)
+    except: st.write("Updating scores...")
 
-    quiz_df = df[(df['Exam'].astype(str).str.strip().str.upper() == sel_exam) & 
-                 (df['Subject'].astype(str).str.strip() == sel_subject)]
+    # Question Management Instructions
+    st.divider()
+    st.subheader("⚙️ Manage Questions")
+    st.info("To add more questions, simply update your Google Sheet. The app will refresh automatically!")
 
-    if quiz_df.empty:
-        st.warning(f"No questions found for {sel_exam} {sel_subject}.")
-    else:
-        q = quiz_df.iloc[st.session_state.q_idx % len(quiz_df)]
-        st.write(f"### Question {st.session_state.q_idx + 1}")
-        st.write(f"**{q['Question']}**")
-        
-        ans = st.radio("Choose answer:", [q['A'], q['B'], q['C'], q['D']], key=st.session_state.q_idx)
-        
-        if st.button("Submit Answer"):
-            col = 'Correct_Answee' if 'Correct_Answee' in q else 'Correct_Answer'
-            if str(ans).strip() == str(q[col]).strip():
-                st.success("Correct! 🎉")
-                st.session_state.score += 1
-                try:
-                    # UPDATED SAVE: No 'id' required
-                    supabase.table("leaderboard").upsert({"name": name, "score": st.session_state.score}, on_conflict="name").execute()
-                except Exception as e:
-                    st.error(f"Save Error: {e}")
-            else:
-                st.error(f"Wrong. Answer was: {q[col]}")
-
-        if st.button("Next Question ➡️"):
-            st.session_state.q_idx += 1
-            st.rerun()
-
-# --- 4. LEADERBOARD ---
 st.divider()
-st.subheader("🏆 National Leaderboard")
-try:
-    res = supabase.table("leaderboard").select("name, score").order("score", desc=True).limit(5).execute()
-    if res.data:
-        st.table(pd.DataFrame(res.data))
-except:
-    st.write("Leaderboard updating...")
+st.caption("Edu-Dash Nigeria © 2026")
