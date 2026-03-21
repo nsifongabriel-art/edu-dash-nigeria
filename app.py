@@ -25,9 +25,9 @@ with st.sidebar:
     st.divider()
     
     if role == "👨‍🏫 Teacher":
-        pwd = st.text_input("School Admin Password:", type="password")
+        pwd = st.text_input("Admin Password:", type="password")
         if pwd != "Lagos2026": 
-            st.error("🔒 Unauthorized access.")
+            st.error("🔒 Unauthorized.")
             st.stop()
 
 # --- 3. STUDENT VIEW ---
@@ -36,23 +36,17 @@ if role == "✍️ Student":
     
     with tab1:
         st.header("Practice Portal")
-        school = st.text_input("Your School Name:", placeholder="e.g. Bright Minds Academy")
-        name = st.text_input("Student Full Name:", placeholder="e.g. Gabriel Okon")
+        school = st.text_input("School Name:")
+        name = st.text_input("Full Name:")
+        sel_exam = st.selectbox("Exam:", ["BECE", "NECO", "WAEC", "JAMB"])
+        sel_subj = st.selectbox("Subject:", ["Mathematics", "English", "Biology"])
         
-        col1, col2 = st.columns(2)
-        with col1: sel_exam = st.selectbox("Exam:", ["BECE", "NECO", "WAEC", "JAMB"])
-        with col2: sel_subj = st.selectbox("Subject:", ["Mathematics", "English", "Biology"])
-        
-        if st.button("🚀 Start Exam"):
-            if not school or not name:
-                st.error("Please enter both School and Name to track your progress!")
-            else:
-                st.session_state.exam_start = time.time()
-                st.session_state.score = 0
-                st.session_state.q_idx = 0
+        if st.button("🚀 Start Exam") and school and name:
+            st.session_state.exam_start = time.time()
+            st.session_state.score = 0
+            st.session_state.q_idx = 0
 
         if 'exam_start' in st.session_state:
-            # Quiz logic
             quiz_df = df[(df['Exam'].astype(str).str.upper().isin(['BECE', 'BESE', 'NECO'])) & (df['Subject'] == sel_subj)]
             if not quiz_df.empty:
                 q = quiz_df.iloc[st.session_state.q_idx % len(quiz_df)]
@@ -65,66 +59,77 @@ if role == "✍️ Student":
                     if str(ans).strip() == str(q[col]).strip():
                         st.success("Correct! 🎉")
                         st.session_state.score += 1
-                        # Unique ID for Database: School_Name_Subject
                         db_id = f"{school} | {name} | {sel_subj}"
                         supabase.table("leaderboard").upsert({"name": db_id, "score": st.session_state.score}, on_conflict="name").execute()
                     else:
                         st.error(f"Wrong. The answer was {q[col]}")
-                
+                    
+                    # --- SHORT EXPLANATION ADDED HERE ---
+                    exp_col = 'Explanation' if 'Explanation' in q else 'Short_Explanation'
+                    if exp_col in q and pd.notna(q[exp_col]):
+                        st.info(f"💡 **Teacher's Note:** {q[exp_col]}")
+
                 if st.button("Next Question ➡️"):
                     st.session_state.q_idx += 1
                     st.rerun()
 
-    # National Leaderboard
-    st.divider()
-    st.subheader("🏆 National Top Performers")
-    try:
-        res = supabase.table("leaderboard").select("name, score").order("score", desc=True).limit(10).execute()
-        if res.data:
-            lead_df = pd.DataFrame(res.data)
-            # Split the ID to show just the student name
-            lead_df['Student'] = lead_df['name'].apply(lambda x: x.split('|')[1] if '|' in x else x)
-            lead_df['School'] = lead_df['name'].apply(lambda x: x.split('|')[0] if '|' in x else "General")
-            st.table(lead_df[['Student', 'School', 'score']])
-    except: st.write("Refreshing leaderboard...")
+    with tab2:
+        st.header("Study Materials")
+        # Fetches materials uploaded by teachers
+        try:
+            mat_res = supabase.table("materials").select("*").execute()
+            if mat_res.data:
+                for m in mat_res.data:
+                    st.link_button(f"📖 {m['subject']}: {m['title']}", m['link'])
+            else:
+                st.write("No materials uploaded yet.")
+        except: st.write("Check back soon for notes!")
 
 # --- 4. TEACHER VIEW ---
 elif role == "👨‍🏫 Teacher":
-    st.header("School Administration")
-    res = supabase.table("leaderboard").select("*").execute()
-    if res.data:
-        full_df = pd.DataFrame(res.data)
-        # Create columns for School, Student, and Subject
-        full_df['School'] = full_df['name'].apply(lambda x: x.split('|')[0].strip() if '|' in x else "Unknown")
-        full_df['Student'] = full_df['name'].apply(lambda x: x.split('|')[1].strip() if '|' in x else x)
-        full_df['Subject'] = full_df['name'].apply(lambda x: x.split('|')[2].strip() if '|' in x else "General")
+    t_tab1, t_tab2, t_tab3 = st.tabs(["📊 Grades", "📤 Upload Materials", "💬 Parent Feedback"])
+    
+    with t_tab1:
+        st.subheader("Student Results")
+        res = supabase.table("leaderboard").select("*").execute()
+        if res.data:
+            st.dataframe(pd.DataFrame(res.data), use_container_width=True)
 
-        schools_list = full_df['School'].unique()
-        selected_school = st.selectbox("Select School to view grades:", schools_list)
-        
-        filtered_df = full_df[full_df['School'] == selected_school]
-        st.write(f"### Results for {selected_school}")
-        st.dataframe(filtered_df[['Student', 'Subject', 'score']], use_container_width=True)
-        st.download_button("📥 Download School Result Sheet", filtered_df.to_csv(), f"{selected_school}_results.csv")
+    with t_tab2:
+        st.subheader("Post Study Materials")
+        m_title = st.text_input("Material Title (e.g. Algebra Notes)")
+        m_subj = st.selectbox("Subject:", ["Mathematics", "English", "Biology"])
+        m_link = st.text_input("Google Drive Link:")
+        if st.button("Save Material"):
+            supabase.table("materials").insert({"title": m_title, "subject": m_subj, "link": m_link}).execute()
+            st.success("Material live for students!")
+
+    with t_tab3:
+        st.subheader("Notes from Parents")
+        try:
+            feed = supabase.table("feedback").select("*").execute()
+            if feed.data: st.table(pd.DataFrame(feed.data))
+        except: st.write("No feedback yet.")
 
 # --- 5. PARENT VIEW ---
 elif role == "👨‍👩‍👧 Parent":
-    st.header("Student Progress Tracker")
-    p_school = st.text_input("Enter School Name:")
-    p_child = st.text_input("Enter Child's Full Name:")
+    st.header("Parental Portal")
+    p_school = st.text_input("School:")
+    p_child = st.text_input("Child Name:")
     
     if p_school and p_child:
-        search_term = f"{p_school} | {p_child}%"
-        res = supabase.table("leaderboard").select("*").ilike("name", search_term).execute()
+        search = f"{p_school} | {p_child}%"
+        res = supabase.table("leaderboard").select("*").ilike("name", search).execute()
         if res.data:
-            st.success(f"Report for {p_child} at {p_school}:")
             for item in res.data:
-                subj = item['name'].split('|')[-1].strip()
-                score = item['score']
-                status = "🌟 Great Work!" if score >= 5 else "⚠️ Needs more practice"
-                st.info(f"**{subj}**: {score} Points - {status}")
-        else:
-            st.error("No data found. Please check spelling or school name.")
+                st.info(f"**{item['name'].split('|')[-1]}**: {item['score']} Points")
+            
+            st.divider()
+            st.subheader("Send Feedback to Teacher")
+            msg = st.text_area("How can the school help your child?")
+            if st.button("Submit Feedback"):
+                supabase.table("feedback").insert({"parent": p_child, "school": p_school, "message": msg}).execute()
+                st.success("Feedback sent! 📩")
 
 st.divider()
 st.caption("Edu-Dash Nigeria © 2026")
