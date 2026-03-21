@@ -31,7 +31,7 @@ if 'start_time' not in st.session_state:
 with st.sidebar:
     st.header("Student Portal")
     name = st.text_input("Full Name:", placeholder="Enter name")
-    sel_exam = st.selectbox("Select Exam:", ["BESE", "WAEC", "JAMB"])
+    sel_exam = st.selectbox("Select Exam:", ["BECE", "WAEC", "JAMB"])
     sel_subject = st.selectbox("Select Subject:", ["Mathematics", "English", "Biology"])
     if 'score' not in st.session_state: st.session_state.score = 0
     st.metric("Your Score", st.session_state.score)
