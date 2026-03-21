@@ -152,4 +152,4 @@ elif role == "👨‍👩‍👧 Parent Center":
 
 # --- FOOTER ---
 st.markdown(f"---")
-st.markdown(f"<div class='created-by'>Ufford I. I.Edu-Dash Nigeria © 2026 | Created by Gabriel Okon</div>", unsafe_allow_html=True)
+st.markdown(f"<div class='created-by'>Ufford I. I.VikidylEdu-Center Nigeria © 2026 | Created by VIKIDYLEDU CENTER</div>", unsafe_allow_html=True)
