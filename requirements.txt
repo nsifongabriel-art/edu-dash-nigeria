@@ -2,3 +2,5 @@ pandas
 google-sheets
 excel-reader
 streamlit
+pandas
+supabase
