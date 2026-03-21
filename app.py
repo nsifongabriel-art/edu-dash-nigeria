@@ -1,12 +1,14 @@
 import streamlit as st
 
-# The Title of your app
-st.title("🇳🇬 Edu-Dash Nigeria")
+# ... (keep your existing title and selectbox code) ...
 
-# A simple welcome message
-st.write("Welcome to the Success Package for JSS3 and SSS3 students.")
+st.subheader("Daily Progress 🎯")
 
-# A selector to simulate the "Exam Type"
-exam = st.selectbox("Select Exam Focus:", ["BECE", "WAEC", "NECO", "JAMB"])
+# Let's simulate the progress
+done = 15
+goal = 30
+percentage = done / goal
 
-st.write(f"You are currently viewing the {exam} preparation dashboard.")
+# Display the bar
+st.progress(percentage)
+st.write(f"You've completed {done} out of {goal} questions today!")
