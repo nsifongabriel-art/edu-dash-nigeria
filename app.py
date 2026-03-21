@@ -9,15 +9,15 @@ KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRt
 supabase: Client = create_client(URL, KEY)
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSeTbSBHxYsciOesGpXt6ATZm_5aWVHQrS7tIFIaibmU4MZU-otPRsxUXG4egEP7P7jXdtL6CHhytAw/pub?output=csv"
 
-@st.cache_data(ttl=5)
+@st.cache_data(ttl=2) # Reduced TTL to see sheet updates faster
 def load_data():
     try: 
         data = pd.read_csv(SHEET_URL)
-        # FORCE HEADERS TO LOWERCASE TO PREVENT KEYERRORS
+        # Clean the Column Names (remove spaces and lowercase)
         data.columns = [str(c).strip().lower() for c in data.columns]
         return data
     except Exception as e:
-        st.error(f"Sheet Load Error: {e}")
+        st.error(f"Error loading sheet: {e}")
         return pd.DataFrame()
 
 df = load_data()
@@ -33,7 +33,6 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# Helper for Leaderboard Display
 def clean_lb(data):
     if not data: return pd.DataFrame()
     ld = pd.DataFrame(data)
@@ -46,7 +45,7 @@ def clean_lb(data):
 with st.sidebar:
     st.image("https://img.icons8.com/fluency/96/education.png", width=60)
     st.title("VikidylEdu Dash")
-    role = st.selectbox("Switch View:", ["✍️ Student", "👨‍🏫 Teacher", "👨‍👩‍👧 Parent"])
+    role = st.selectbox("Navigation Menu", ["✍️ Student", "👨‍🏫 Teacher", "👨‍👩‍👧 Parent"])
     st.divider()
     st.caption("Developed by: **Ufford I.I.**")
     st.caption("VikidylEdu Centre © 2026")
@@ -73,23 +72,24 @@ if role == "✍️ Student":
 
             dept_col, subj_col = st.columns(2)
             if "Senior" in level:
-                with dept_col: dept = st.selectbox("Dept:", ["Science", "Business", "Arts"])
+                with dept_col: dept = st.selectbox("Department:", ["Science", "Business", "Humanities/Arts"])
                 with subj_col:
                     if dept == "Science": subjs = ["Mathematics", "English", "Physics", "Chemistry", "Biology"]
-                    elif dept == "Business": subjs = ["Mathematics", "English", "Accounting", "Commerce", "Economics"]
+                    elif dept == "Business": subjs = ["Mathematics", "English", "Financial Accounting", "Commerce", "Economics"]
                     else: subjs = ["Mathematics", "English", "Government", "Literature", "History"]
-                    sel_subj = st.selectbox("Subject:", subjs)
+                    sel_subj = st.selectbox("Choose Subject:", subjs)
             else:
-                with dept_col: st.info("Junior Secondary")
-                with subj_col: sel_subj = st.selectbox("Subject:", ["Mathematics", "English", "Basic Science", "Social Studies"])
+                with dept_col: st.info("Target Exam: BECE")
+                with subj_col: sel_subj = st.selectbox("Choose Subject:", ["Mathematics", "English", "Basic Science", "Social Studies", "CCA", "PVS", "National Value"])
 
-            if st.button("🚀 Start Exam") and school and name:
+            if st.button("🚀 Start 30-Minute Exam") and school and name:
                 st.session_state.exam_start = time.time()
                 st.session_state.score = 0
                 st.session_state.q_idx = 0
                 st.session_state.db_id = f"{school} | {name} | {sel_subj} | {sel_year}"
-                st.session_state.active_subj = sel_subj.lower().strip()
-                st.session_state.active_year = str(sel_year).strip()
+                # Save cleaned search terms
+                st.session_state.search_subj = str(sel_subj).strip().lower()
+                st.session_state.search_year = str(sel_year).strip()
                 st.rerun()
         
         else:
@@ -101,39 +101,42 @@ if role == "✍️ Student":
             
             if remaining <= 0:
                 st.error("🚨 TIME EXPIRED!")
-                if st.button("Finish"):
+                if st.button("Finish & View Score"):
                     del st.session_state['exam_start']
                     st.rerun()
             else:
-                # SAFE FILTERING (Matches lowercase headers)
-                if not df.empty and 'subject' in df.columns and 'year' in df.columns:
-                    quiz_df = df[(df['subject'].astype(str).str.lower() == st.session_state.active_subj) & 
-                                (df['year'].astype(str) == st.session_state.active_year)]
+                # SUPER-CLEAN FILTERING
+                if not df.empty:
+                    # Filter: ignore spaces and case
+                    quiz_df = df[
+                        (df['subject'].astype(str).str.strip().str.lower() == st.session_state.search_subj) & 
+                        (df['year'].astype(str).str.strip() == st.session_state.search_year)
+                    ]
 
                     if not quiz_df.empty:
                         q = quiz_df.iloc[st.session_state.q_idx % len(quiz_df)]
                         st.subheader(f"Question {st.session_state.q_idx + 1}")
                         st.info(q['question'])
                         
-                        # Find A, B, C, D columns safely
-                        ans = st.radio("Choose:", [q['a'], q['b'], q['c'], q['d']], key=f"q_{st.session_state.q_idx}")
+                        # Find ABCD columns (lowercase)
+                        ans = st.radio("Choose Answer:", [q['a'], q['b'], q['c'], q['d']], key=f"q_{st.session_state.q_idx}")
                         
-                        if st.button("Submit Answer"):
-                            # Check multiple possible column names for correct answer
-                            c_col = next((c for c in ['correct_answer', 'correct_answee', 'correct'] if c in q), None)
+                        if st.button("✅ Submit Answer"):
+                            c_col = next((c for c in ['correct_answer', 'correct_answee'] if c in df.columns), None)
                             if c_col and str(ans).strip() == str(q[c_col]).strip():
                                 st.success("Correct! 🎉")
                                 st.session_state.score += 1
                                 supabase.table("leaderboard").upsert({"name": st.session_state.db_id, "score": st.session_state.score}, on_conflict="name").execute()
                             else:
-                                st.error(f"Incorrect. The right answer was: {q[c_col] if c_col else 'Not Found'}")
+                                correct_val = q[c_col] if c_col else "Unknown"
+                                st.error(f"Wrong. The correct answer was: {correct_val}")
                         
                         if st.button("Next Question ➡️"):
                             st.session_state.q_idx += 1
                             st.rerun()
                     else:
-                        st.warning(f"No questions found for {st.session_state.active_subj.title()} ({st.session_state.active_year}).")
-                        if st.button("Return"):
+                        st.warning(f"No questions found in the sheet for {st.session_state.search_subj.title()} in {st.session_state.search_year}.")
+                        if st.button("Exit Quiz"):
                             del st.session_state['exam_start']
                             st.rerun()
 
