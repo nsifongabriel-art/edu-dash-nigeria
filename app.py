@@ -9,15 +9,13 @@ KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRt
 supabase: Client = create_client(URL, KEY)
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSeTbSBHxYsciOesGpXt6ATZm_5aWVHQrS7tIFIaibmU4MZU-otPRsxUXG4egEP7P7jXdtL6CHhytAw/pub?output=csv"
 
-@st.cache_data(ttl=2) # Reduced TTL to see sheet updates faster
+@st.cache_data(ttl=2)
 def load_data():
     try: 
         data = pd.read_csv(SHEET_URL)
-        # Clean the Column Names (remove spaces and lowercase)
         data.columns = [str(c).strip().lower() for c in data.columns]
         return data
     except Exception as e:
-        st.error(f"Error loading sheet: {e}")
         return pd.DataFrame()
 
 df = load_data()
@@ -33,13 +31,20 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
+# FIXED LEADERBOARD CLEANER
 def clean_lb(data):
     if not data: return pd.DataFrame()
     ld = pd.DataFrame(data)
-    ld['School'] = ld['name'].apply(lambda x: x.split('|')[0].strip() if '|' in x else "General")
-    ld['Student'] = ld['name'].apply(lambda x: x.split('|')[1].strip() if '|' in x else x)
-    ld['Details'] = ld['name'].apply(lambda x: x.split('|')[-2].strip() + " (" + x.split('|')[-1].strip() + ")" if '|' in x else "Quiz")
-    return ld[['Student', 'School', 'Details', 'score']]
+    def parse_name(val):
+        parts = val.split('|')
+        school = parts[0].strip() if len(parts) > 0 else "N/A"
+        student = parts[1].strip() if len(parts) > 1 else "N/A"
+        subj = parts[2].strip() if len(parts) > 2 else ""
+        year = parts[3].strip() if len(parts) > 3 else ""
+        return pd.Series([student, school, f"{subj} ({year})"])
+    
+    ld[['Student', 'School', 'Exam Details']] = ld['name'].apply(parse_name)
+    return ld[['Student', 'School', 'Exam Details', 'score']].sort_values(by="score", ascending=False)
 
 # --- 3. SIDEBAR ---
 with st.sidebar:
@@ -87,13 +92,11 @@ if role == "✍️ Student":
                 st.session_state.score = 0
                 st.session_state.q_idx = 0
                 st.session_state.db_id = f"{school} | {name} | {sel_subj} | {sel_year}"
-                # Save cleaned search terms
                 st.session_state.search_subj = str(sel_subj).strip().lower()
                 st.session_state.search_year = str(sel_year).strip()
                 st.rerun()
         
         else:
-            # TIMER logic
             elapsed = time.time() - st.session_state.exam_start
             remaining = max(0, 1800 - int(elapsed))
             mins, secs = divmod(remaining, 60)
@@ -101,51 +104,65 @@ if role == "✍️ Student":
             
             if remaining <= 0:
                 st.error("🚨 TIME EXPIRED!")
-                if st.button("Finish & View Score"):
+                if st.button("Finish & View Results"):
                     del st.session_state['exam_start']
                     st.rerun()
             else:
-                # SUPER-CLEAN FILTERING
                 if not df.empty:
-                    # Filter: ignore spaces and case
                     quiz_df = df[
                         (df['subject'].astype(str).str.strip().str.lower() == st.session_state.search_subj) & 
                         (df['year'].astype(str).str.strip() == st.session_state.search_year)
                     ]
 
                     if not quiz_df.empty:
-                        q = quiz_df.iloc[st.session_state.q_idx % len(quiz_df)]
-                        st.subheader(f"Question {st.session_state.q_idx + 1}")
-                        st.info(q['question'])
+                        total_q = len(quiz_df)
+                        # Ensure we don't go out of bounds
+                        idx = st.session_state.q_idx
                         
-                        # Find ABCD columns (lowercase)
-                        ans = st.radio("Choose Answer:", [q['a'], q['b'], q['c'], q['d']], key=f"q_{st.session_state.q_idx}")
-                        
-                        if st.button("✅ Submit Answer"):
-                            c_col = next((c for c in ['correct_answer', 'correct_answee'] if c in df.columns), None)
-                            if c_col and str(ans).strip() == str(q[c_col]).strip():
-                                st.success("Correct! 🎉")
-                                st.session_state.score += 1
-                                supabase.table("leaderboard").upsert({"name": st.session_state.db_id, "score": st.session_state.score}, on_conflict="name").execute()
-                            else:
-                                correct_val = q[c_col] if c_col else "Unknown"
-                                st.error(f"Wrong. The correct answer was: {correct_val}")
-                        
-                        if st.button("Next Question ➡️"):
-                            st.session_state.q_idx += 1
-                            st.rerun()
+                        if idx < total_q:
+                            q = quiz_df.iloc[idx]
+                            st.subheader(f"Question {idx + 1} of {total_q}")
+                            st.info(q['question'])
+                            
+                            ans = st.radio("Choose Answer:", [q['a'], q['b'], q['c'], q['d']], key=f"q_{idx}")
+                            
+                            c1, c2 = st.columns(2)
+                            with c1:
+                                if st.button("✅ Submit Answer"):
+                                    c_col = next((c for c in ['correct_answer', 'correct_answee'] if c in df.columns), None)
+                                    if c_col and str(ans).strip() == str(q[c_col]).strip():
+                                        st.success("Correct! 🎉")
+                                        st.session_state.score += 1
+                                        supabase.table("leaderboard").upsert({"name": st.session_state.db_id, "score": st.session_state.score}, on_conflict="name").execute()
+                                    else:
+                                        correct_val = q[c_col] if c_col else "Unknown"
+                                        st.error(f"Wrong. The correct answer was: {correct_val}")
+                            with c2:
+                                if st.button("Next Question ➡️"):
+                                    st.session_state.q_idx += 1
+                                    st.rerun()
+                        else:
+                            st.balloons()
+                            st.success(f"🎊 Practice Complete! Final Score: {st.session_state.score}/{total_q}")
+                            if st.button("Restart New Session"):
+                                del st.session_state['exam_start']
+                                st.rerun()
                     else:
-                        st.warning(f"No questions found in the sheet for {st.session_state.search_subj.title()} in {st.session_state.search_year}.")
-                        if st.button("Exit Quiz"):
+                        st.warning("No questions found for this selection.")
+                        if st.button("Back"):
                             del st.session_state['exam_start']
                             st.rerun()
 
     with t3:
         st.subheader("🏆 Global Performance Board")
-        res = supabase.table("leaderboard").select("*").order("score", desc=True).limit(10).execute()
-        if res.data: st.table(clean_lb(res.data))
+        try:
+            res = supabase.table("leaderboard").select("*").execute()
+            if res.data:
+                st.table(clean_lb(res.data).head(15))
+        except:
+            st.write("Leaderboard is refreshing...")
 
-# --- 5. TEACHER & PARENT VIEWS ---
+# --- 5. TEACHER & PARENT ---
 elif role == "👨‍🏫 Teacher":
     st.header("Teacher Analytics")
     pwd = st.text_input("Key:", type="password")
