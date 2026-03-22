@@ -3,7 +3,7 @@ import pandas as pd
 import time
 from supabase import create_client, Client
 
-# --- 1. DATABASE SETUP ---
+# --- 1. SETUP ---
 URL = "https://tmbtnbxrrylulhgvnfjj.supabase.co"
 KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRtYnRuYnhycnlsdWxoZ3ZuZmpqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQxMDQ2ODcsImV4cCI6MjA4OTY4MDY4N30.Fd1TPTCjN2u-_EOmkkqOb3TAKW8Q5RGv0AtAA85jW4s"
 supabase: Client = create_client(URL, KEY)
@@ -20,13 +20,15 @@ def load_data():
 df = load_data()
 
 # --- 2. UI CONFIG ---
-st.set_page_config(page_title="Edu-Dash | VikidylEdu", page_icon="🇳🇬", layout="wide")
+st.set_page_config(page_title="VikidylEdu CBT", page_icon="🇳🇬", layout="wide")
 st.markdown("""<style>
-    .stButton>button { border-radius: 12px; height: 3em; background-color: #1E3A8A; color: white; font-weight: bold; border: 2px solid #FFD700; }
-    .timer-box { font-size: 22px; font-weight: bold; color: #D32F2F; text-align: center; padding: 10px; border: 2px solid #D32F2F; border-radius: 10px; margin-bottom: 20px; }
-    .created-by { text-align: center; color: #1E3A8A; padding: 20px; font-weight: bold; font-size: 1.1em; border-top: 2px solid #EEE; margin-top: 40px;}
+    .stButton>button { border-radius: 8px; width: 100%; font-weight: bold; }
+    .q-btn { background-color: #F0F2F6; border: 1px solid #CCC; margin: 2px; }
+    .timer-text { font-size: 28px; font-weight: bold; color: #D32F2F; text-align: center; background: #FFEBEE; padding: 10px; border-radius: 10px; border: 2px solid #D32F2F; }
+    .created-by { text-align: center; color: #1E3A8A; padding: 20px; font-weight: bold; border-top: 2px solid #EEE; margin-top: 40px;}
 </style>""", unsafe_allow_html=True)
 
+# --- 3. LOGIC HELPERS ---
 def clean_lb(data):
     if not data: return pd.DataFrame()
     ld = pd.DataFrame(data)
@@ -36,109 +38,126 @@ def clean_lb(data):
     ld[['Student', 'School', 'Details']] = ld['name'].apply(parse_name)
     return ld[['Student', 'School', 'Details', 'score']].sort_values(by="score", ascending=False)
 
-# --- 3. SIDEBAR ---
+# --- 4. SIDEBAR ---
 with st.sidebar:
     st.image("https://img.icons8.com/fluency/96/education.png", width=60)
-    st.title("VikidylEdu Dash")
-    role = st.selectbox("Navigation", ["✍️ Student", "👨‍🏫 Teacher", "👨‍👩‍👧 Parent"])
+    st.title("VikidylEdu")
+    role = st.selectbox("Menu", ["✍️ Student", "👨‍🏫 Teacher", "👨‍👩‍👧 Parent"])
     st.caption("Developed by: **Ufford I.I.**\nVikidylEdu Centre © 2026")
 
-# --- 4. STUDENT PORTAL ---
+# --- 5. STUDENT CBT PORTAL ---
 if role == "✍️ Student":
-    st.header("🎯 Practice Center")
-    t1, t2, t3 = st.tabs(["📝 Quiz Room", "📚 Library", "🏆 Leaderboard"])
+    t1, t2 = st.tabs(["📝 CBT Exam Room", "🏆 Leaderboard"])
     
     with t1:
-        if 'exam_start' not in st.session_state:
+        if 'exam_active' not in st.session_state:
+            # Registration Form
             c1, c2 = st.columns(2)
-            with c1: school = st.text_input("School Name:")
+            with c1: school = st.text_input("School:")
             with c2: name = st.text_input("Full Name:")
-            l_col, y_col, e_col = st.columns(3)
-            with l_col: level = st.selectbox("Level:", ["Junior (JSS)", "Senior (SSS)"])
-            with y_col: sel_year = st.selectbox("Exam Year:", [str(y) for y in range(2026, 2014, -1)])
-            with e_col: sel_exam = st.selectbox("Exam Type:", ["BECE"] if "Junior" in level else ["WAEC", "NECO", "JAMB"])
             
-            dept_col, subj_col = st.columns(2)
-            if "Senior" in level:
-                with dept_col: dept = st.selectbox("Dept:", ["Science", "Business", "Humanities/Arts"])
-                with subj_col:
-                    sub_list = ["Mathematics", "English", "Physics", "Chemistry", "Biology"] if dept=="Science" else ["Mathematics", "English", "Accounting", "Commerce", "Economics"] if dept=="Business" else ["Mathematics", "English", "Government", "Literature", "History"]
-                    sel_subj = st.selectbox("Subject:", sub_list)
-            else:
-                with subj_col: sel_subj = st.selectbox("Subject:", ["Mathematics", "English", "Basic Science", "Social Studies", "CCA", "PVS", "National Value"])
+            l_col, y_col, e_col = st.columns(3)
+            with l_col: level = st.selectbox("Level", ["Junior (JSS)", "Senior (SSS)"])
+            with y_col: year = st.selectbox("Year", [str(y) for y in range(2026, 2014, -1)])
+            with e_col: exam = st.selectbox("Exam", ["BECE"] if "Junior" in level else ["WAEC", "NECO", "JAMB"])
+            
+            subjs = ["Mathematics", "English", "Physics", "Chemistry", "Biology"] # Simplified for demo
+            subj = st.selectbox("Select Subject", subjs)
 
-            if st.button("🚀 Start Exam") and school and name:
-                st.session_state.exam_start, st.session_state.score, st.session_state.q_idx = time.time(), 0, 0
-                st.session_state.db_id = f"{school} | {name} | {sel_subj} | {sel_year}"
-                st.session_state.search_subj, st.session_state.search_year = sel_subj.strip().lower(), str(sel_year).strip()
+            if st.button("🚀 START CBT EXAM") and school and name:
+                st.session_state.exam_active = True
+                st.session_state.start_time = time.time()
+                st.session_state.current_q = 0
+                st.session_state.user_answers = {} # Store answers here
+                st.session_state.db_id = f"{school} | {name} | {subj} | {year}"
+                st.session_state.s_subj = subj.strip().lower()
+                st.session_state.s_year = str(year).strip()
                 st.rerun()
         
         else:
-            elapsed = time.time() - st.session_state.exam_start
-            remaining = max(0, 1800 - int(elapsed))
-            mins, secs = divmod(remaining, 60)
-            st.markdown(f"<div class='timer-box'>⏳ {mins:02d}:{secs:02d}</div>", unsafe_allow_html=True)
+            # --- TIMER ---
+            elapsed = time.time() - st.session_state.start_time
+            rem = max(0, 1800 - int(elapsed))
+            m, s = divmod(rem, 60)
+            st.markdown(f"<div class='timer-text'>⏱️ {m:02d}:{s:02d}</div>", unsafe_allow_html=True)
             
-            if remaining <= 0:
-                st.error("🚨 TIME EXPIRED!"); st.button("Finish", on_click=lambda: st.session_state.pop('exam_start'))
-            else:
-                if not df.empty:
-                    quiz_df = df[(df['subject'].astype(str).str.strip().str.lower() == st.session_state.search_subj) & 
-                                (df['year'].astype(str).str.strip() == st.session_state.search_year)]
-
-                    if not quiz_df.empty:
-                        total_q = len(quiz_df)
-                        idx = st.session_state.q_idx
+            if rem <= 0:
+                st.error("🚨 Time Up! Exam Submitted.")
+                if st.button("See Final Score"): st.session_state.clear(); st.rerun()
+            
+            # --- FETCH QUESTIONS ---
+            quiz_df = df[(df['subject'] == st.session_state.s_subj) & (df['year'] == st.session_state.s_year)]
+            
+            if not quiz_df.empty:
+                total = len(quiz_df)
+                curr = st.session_state.current_q
+                q_data = quiz_df.iloc[curr]
+                
+                # --- NAVIGATION GRID ---
+                st.write("### Question Navigation")
+                cols = st.columns(10)
+                for i in range(total):
+                    btn_label = f"{i+1}"
+                    if cols[i % 10].button(btn_label, key=f"nav_{i}"):
+                        st.session_state.current_q = i
+                        st.rerun()
+                
+                st.divider()
+                
+                # --- QUESTION DISPLAY ---
+                st.subheader(f"Question {curr + 1} of {total}")
+                st.info(q_data['question'])
+                
+                # Pre-fill answer if already selected
+                saved_ans = st.session_state.user_answers.get(curr, None)
+                options = [str(q_data['a']), str(q_data['b']), str(q_data['c']), str(q_data['d'])]
+                
+                choice = st.radio("Select your answer:", options, index=options.index(saved_ans) if saved_ans in options else 0)
+                
+                # Save answer immediately on change
+                st.session_state.user_answers[curr] = choice
+                
+                # --- PREV / NEXT BUTTONS ---
+                b1, b2, b3 = st.columns([1,1,2])
+                with b1:
+                    if st.button("⬅️ Previous") and curr > 0:
+                        st.session_state.current_q -= 1
+                        st.rerun()
+                with b2:
+                    if st.button("Next ➡️") and curr < total - 1:
+                        st.session_state.current_q += 1
+                        st.rerun()
+                with b3:
+                    if st.button("🏁 FINISH & SUBMIT EXAM"):
+                        # Calculate Score at the end
+                        score = 0
+                        c_col = next((c for c in ['correct_answer', 'correct_answee'] if c in df.columns), None)
+                        for idx, user_choice in st.session_state.user_answers.items():
+                            actual_correct = str(quiz_df.iloc[idx][c_col]).strip().upper()
+                            if str(user_choice).strip().upper() == actual_correct:
+                                score += 1
                         
-                        if idx < total_q:
-                            q = quiz_df.iloc[idx]
-                            st.subheader(f"Question {idx + 1} of {total_q}")
-                            st.info(q['question'])
-                            ans = st.radio("Choose Answer:", [str(q['a']), str(q['b']), str(q['c']), str(q['d'])], key=f"q_{idx}")
-                            
-                            c1, c2 = st.columns(2)
-                            with c1:
-                                if st.button("✅ Submit"):
-                                    c_col = next((c for c in ['correct_answer', 'correct_answee'] if c in df.columns), None)
-                                    # --- CRITICAL FIX: STRIP AND UPPERCASE BOTH SIDES ---
-                                    user_choice = str(ans).strip().upper()
-                                    correct_val = str(q[c_col]).strip().upper()
-                                    
-                                    if user_choice == correct_val:
-                                        st.success("Correct! 🎉")
-                                        st.session_state.score += 1
-                                        supabase.table("leaderboard").upsert({"name": st.session_state.db_id, "score": st.session_state.score}, on_conflict="name").execute()
-                                    else:
-                                        st.error(f"Wrong. The correct answer was: {q[c_col]}")
-                            with c2:
-                                if st.button("Next ➡️"):
-                                    st.session_state.q_idx += 1; st.rerun()
-                        else:
-                            st.balloons(); st.success(f"Final Score: {st.session_state.score}/{total_q}")
-                            if st.button("Restart"): del st.session_state['exam_start']; st.rerun()
-                    else: st.warning("No questions found."); st.button("Back", on_click=lambda: st.session_state.pop('exam_start'))
+                        supabase.table("leaderboard").upsert({"name": st.session_state.db_id, "score": score}, on_conflict="name").execute()
+                        st.session_state.final_score = score
+                        st.session_state.exam_finished = True
+                        del st.session_state['exam_active']
+                        st.rerun()
 
-    with t3:
+            # --- EXPLANATION TAB (Show after submission) ---
+            if 'exam_finished' in st.session_state:
+                st.success(f"Final Score: {st.session_state.final_score}")
+                with st.expander("🔍 View Explanations for all questions"):
+                    for i in range(len(quiz_df)):
+                        row = quiz_df.iloc[i]
+                        st.write(f"**Q{i+1}:** {row['question']}")
+                        st.write(f"✅ Correct Answer: {row['correct_answer']}")
+                        if 'explanation' in row: st.write(f"💡 *Explanation:* {row['explanation']}")
+                        st.divider()
+                if st.button("Restart"): st.session_state.clear(); st.rerun()
+
+    with t2:
         st.subheader("🏆 Leaderboard")
-        try:
-            res = supabase.table("leaderboard").select("*").execute()
-            if res.data: st.table(clean_lb(res.data).head(15))
-        except: st.write("Refreshing...")
-
-# --- 5. TEACHER & PARENT ---
-elif role == "👨‍🏫 Teacher":
-    st.header("Teacher Suite")
-    if st.text_input("Key:", type="password") == "Lagos2026":
-        ts = st.text_input("Filter School:")
-        if ts:
-            res = supabase.table("leaderboard").select("*").ilike("name", f"{ts}%").execute()
-            if res.data: st.dataframe(clean_lb(res.data), use_container_width=True)
-
-elif role == "👨‍👩‍👧 Parent":
-    st.header("Parent Report")
-    ps, pc = st.text_input("School:"), st.text_input("Child:")
-    if ps and pc:
-        res = supabase.table("leaderboard").select("*").ilike("name", f"{ps} | {pc}%").execute()
-        if res.data: st.table(clean_lb(res.data))
+        res = supabase.table("leaderboard").select("*").execute()
+        if res.data: st.table(clean_lb(res.data).head(10))
 
 st.markdown("<div class='created-by'>Created by Ufford I.I. VikidylEdu Centre © 2026</div>", unsafe_allow_html=True)
