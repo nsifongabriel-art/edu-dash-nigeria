@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import time
+import random
 from supabase import create_client, Client
 
 # --- 1. SETUP ---
@@ -14,7 +15,6 @@ def load_data():
     try: 
         data = pd.read_csv(SHEET_URL)
         data.columns = [str(c).strip().lower() for c in data.columns]
-        # Standardize for searching
         for col in ['exam', 'subject', 'year']:
             if col in data.columns:
                 data[col] = data[col].astype(str).str.strip().str.upper()
@@ -23,142 +23,126 @@ def load_data():
 
 df = load_data()
 
-# --- 2. HIGH CONTRAST STYLING ---
+# --- 2. STYLING ---
 st.set_page_config(page_title="VikidylEdu CBT", layout="wide")
-
 st.markdown("""
     <style>
-    /* Make the question text bold, large, and dark black */
-    .question-box {
-        background-color: #f9f9f9;
-        padding: 20px;
-        border-radius: 10px;
-        border-left: 10px solid #1E3A8A;
-        font-size: 22px !important;
-        color: #000000 !important;
-        line-height: 1.6;
-        margin-bottom: 20px;
-    }
-    .stRadio label { font-size: 18px !important; color: #1E3A8A !important; font-weight: bold; }
+    .question-box { background-color: #ffffff; padding: 25px; border-radius: 12px; border-left: 12px solid #1E3A8A; 
+                    font-size: 22px !important; color: #000000 !important; line-height: 1.6; border: 1px solid #ddd; box-shadow: 2px 2px 10px rgba(0,0,0,0.1); }
     .timer-text { font-size: 32px; font-weight: bold; color: #D32F2F; text-align: center; }
+    .stRadio label { font-size: 19px !important; font-weight: 600; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 3. LOGIC HELPERS ---
-def clean_lb(data):
-    if not data: return pd.DataFrame()
-    ld = pd.DataFrame(data)
-    def parse_name(val):
-        parts = val.split('|')
-        return pd.Series([parts[1].strip() if len(parts)>1 else "N/A", parts[0].strip() if len(parts)>0 else "N/A", f"{parts[2].strip() if len(parts)>2 else ''} ({parts[3].strip() if len(parts)>3 else ''})"])
-    ld[['Student', 'School', 'Details']] = ld['name'].apply(parse_name)
-    return ld[['Student', 'School', 'Details', 'score']]
-
-# --- 4. SIDEBAR ---
+# --- 3. STUDENT PORTAL ---
 with st.sidebar:
-    st.image("https://img.icons8.com/fluency/96/education.png", width=60)
     st.title("VikidylEdu")
-    role = st.selectbox("Switch Role", ["✍️ Student", "👨‍🏫 Teacher", "👨‍👩‍👧 Parent"])
+    role = st.selectbox("Role", ["✍️ Student", "👨‍🏫 Teacher", "👨‍👩‍👧 Parent"])
 
-# --- 5. STUDENT PORTAL ---
 if role == "✍️ Student":
     if 'exam_active' not in st.session_state:
-        st.header("Exam Registration")
+        st.header("CBT Mock Registration")
         c1, c2 = st.columns(2)
         with c1: school = st.text_input("School:")
         with c2: name = st.text_input("Full Name:")
         
         y_col, e_col, s_col = st.columns(3)
-        with y_col: year = st.selectbox("Year", ["2020", "2021", "2022", "2023", "2024", "2025", "2026"])
-        with e_col: exam = st.selectbox("Exam", ["JAMB", "WAEC", "NECO", "BECE"])
-        with s_col: subj = st.selectbox("Subject", ["MATHEMATICS", "ENGLISH", "BIOLOGY", "PHYSICS", "CHEMISTRY"])
+        with y_col: year_choice = st.selectbox("Exam Year", ["ALL YEARS (Mixed)", "2020", "2021", "2022", "2023", "2024", "2025"])
+        with e_col: exam = st.selectbox("Exam Type", ["JAMB", "WAEC", "NECO", "BECE"])
+        with s_col: subj = st.selectbox("Subject", sorted(df['subject'].unique()) if not df.empty else ["ENGLISH"])
 
-        if st.button("🚀 START EXAM") and school and name:
-            st.session_state.exam_active = True
-            st.session_state.start_time = time.time()
-            st.session_state.current_q = 0
-            st.session_state.user_answers = {}
-            st.session_state.db_id = f"{school} | {name} | {subj} | {year}"
-            st.session_state.s_exam = exam.strip().upper()
-            st.session_state.s_subj = subj.strip().upper()
-            st.session_state.s_year = year.strip().upper()
-            st.rerun()
+        if st.button("🚀 START SHUFFLED EXAM") and school and name:
+            # Filtering
+            if year_choice == "ALL YEARS (Mixed)":
+                quiz_df = df[(df['exam'] == exam.upper()) & (df['subject'] == subj.upper())]
+            else:
+                quiz_df = df[(df['exam'] == exam.upper()) & (df['subject'] == subj.upper()) & (df['year'] == year_choice)]
+            
+            if not quiz_df.empty:
+                # RANDOMIZATION LOGIC
+                quiz_data = quiz_df.sample(frac=1).reset_index(drop=True) 
+                st.session_state.quiz_data = quiz_data
+                st.session_state.exam_active = True
+                st.session_state.start_time = time.time()
+                st.session_state.current_q = 0
+                st.session_state.user_answers = {}
+                st.session_state.db_id = f"{school} | {name} | {subj} | {year_choice}"
+                st.rerun()
+            else:
+                st.error("No questions found for this selection.")
     else:
-        # TIMER
+        # EXAM UI
         rem = max(0, 1800 - int(time.time() - st.session_state.start_time))
         st.markdown(f"<div class='timer-text'>⏱️ {rem//60:02d}:{rem%60:02d}</div>", unsafe_allow_html=True)
         
-        # FILTER DATA
-        quiz_df = df[(df['exam'] == st.session_state.s_exam) & 
-                     (df['subject'] == st.session_state.s_subj) & 
-                     (df['year'] == st.session_state.s_year)]
+        q_df = st.session_state.quiz_data
+        curr = st.session_state.current_q
+        q = q_df.iloc[curr]
         
-        if not quiz_df.empty:
-            curr = st.session_state.current_q
-            total = len(quiz_df)
-            q_data = quiz_df.iloc[curr]
-            
-            st.subheader(f"Question {curr+1} of {total}")
-            
-            # --- HIGH CONTRAST QUESTION BOX ---
-            st.markdown(f"""<div class="question-box">{q_data['question']}</div>""", unsafe_allow_html=True)
-            
-            opts = [str(q_data['a']), str(q_data['b']), str(q_data['c']), str(q_data['d'])]
-            saved = st.session_state.user_answers.get(curr, None)
-            choice = st.radio("Select Answer:", opts, index=opts.index(saved) if saved in opts else 0)
-            st.session_state.user_answers[curr] = choice
-            
-            c1, c2, c3 = st.columns([1,1,2])
-            with c1: 
-                if st.button("⬅️ Prev") and curr > 0: st.session_state.current_q -= 1; st.rerun()
-            with c2: 
-                if st.button("Next ➡️") and curr < total - 1: st.session_state.current_q += 1; st.rerun()
-            with c3:
-                if st.button("🏁 SUBMIT EXAM"):
-                    score = 0
-                    c_col = next((c for c in ['correct_answer', 'correct_answee'] if c in df.columns), 'correct_answer')
-                    for k, v in st.session_state.user_answers.items():
-                        if str(v).strip().upper() == str(quiz_df.iloc[k][c_col]).strip().upper(): score += 1
-                    supabase.table("leaderboard").upsert({"name": st.session_state.db_id, "score": score}, on_conflict="name").execute()
-                    st.session_state.final_score = score
-                    st.session_state.finished_data = quiz_df.to_dict('records')
-                    st.session_state.final_user_ans = st.session_state.user_answers.copy()
-                    del st.session_state['exam_active']; st.rerun()
-        else:
-            st.error("No questions found.")
-            if st.button("Return"): st.session_state.clear(); st.rerun()
-
-    # --- REVIEW SECTION WITH EXPLANATIONS ---
-    if 'final_score' in st.session_state:
-        st.success(f"Final Score: {st.session_state.final_score}")
-        st.header("📝 Post-Exam Review")
+        st.subheader(f"Question {curr+1} of {len(q_df)}")
+        st.markdown(f'<div class="question-box">{q["question"]}</div>', unsafe_allow_html=True)
         
-        for i, r in enumerate(st.session_state.finished_data):
-            user_ans = st.session_state.final_user_ans.get(i, "No Answer")
-            correct_ans = r.get('correct_answer', 'Check Sheet')
-            
-            with st.expander(f"Question {i+1}: {r['question'][:50]}..."):
-                st.write(f"**Full Question:** {r['question']}")
-                st.write(f"**Your Answer:** {user_ans}")
-                st.write(f"**Correct Answer:** :green[{correct_ans}]")
+        opts = [str(q['a']), str(q['b']), str(q['c']), str(q['d'])]
+        ans = st.radio("Choose Answer:", opts, key=f"q_{curr}")
+        st.session_state.user_answers[curr] = ans
+        
+        col1, col2, col3 = st.columns([1,1,2])
+        with col1: 
+            if st.button("⬅️ Back") and curr > 0: st.session_state.current_q -= 1; st.rerun()
+        with col2:
+            if st.button("Next ➡️") and curr < len(q_df)-1: st.session_state.current_q += 1; st.rerun()
+        with col3:
+            if st.button("🏁 SUBMIT FOR GRADING"):
+                score = 0
+                c_col = next((c for c in ['correct_answer', 'correct_answee'] if c in df.columns), 'correct_answer')
+                for i, user_ans in st.session_state.user_answers.items():
+                    if str(user_ans).strip().upper() == str(q_df.iloc[i][c_col]).strip().upper(): score += 1
                 
-                # Show Explanation if it exists in the Google Sheet
-                expl = r.get('explanation', 'No explanation provided for this question.')
-                st.info(f"💡 **Explanation:** {expl}")
-        
-        if st.button("Start New Exam"): st.session_state.clear(); st.rerun()
+                # Uploading detailed result for Teacher analytics
+                # We store a "Script" in a hidden column or simply show it in the review
+                supabase.table("leaderboard").upsert({"name": st.session_state.db_id, "score": score}, on_conflict="name").execute()
+                st.session_state.final_score = score
+                st.session_state.finished_rows = q_df.to_dict('records')
+                st.session_state.final_ans = st.session_state.user_answers.copy()
+                del st.session_state['exam_active']; st.rerun()
 
+    if 'final_score' in st.session_state:
+        st.success(f"Score: {st.session_state.final_score}")
+        with st.expander("Review Script & Explanations"):
+            for i, r in enumerate(st.session_state.finished_rows):
+                u_a = st.session_state.final_ans.get(i, "N/A")
+                c_a = r.get('correct_answer', 'Check Sheet')
+                color = "green" if str(u_a).upper() == str(c_a).upper() else "red"
+                st.markdown(f"**Q{i+1}:** {r['question']}")
+                st.markdown(f"Your Answer: :{color}[{u_a}] | Correct: :green[{c_a}]")
+                st.info(f"💡 Explanation: {r.get('explanation', 'N/A')}")
+        if st.button("New Test"): st.session_state.clear(); st.rerun()
+
+# --- 4. TEACHER SUITE (DIAGNOSTICS) ---
 elif role == "👨‍🏫 Teacher":
-    if st.text_input("Key:", type="password") == "Lagos2026":
+    if st.text_input("Access Key:", type="password") == "Lagos2026":
+        st.header("Teacher Diagnostic Suite")
         res = supabase.table("leaderboard").select("*").execute()
-        if res.data: st.dataframe(clean_lb(res.data))
+        if res.data:
+            ld = pd.DataFrame(res.data)
+            # Filter by student name for deep dive
+            search = st.text_input("Search Student Name to see their Script:")
+            if search:
+                student_data = ld[ld['name'].str.contains(search, case=False)]
+                st.write(f"Found {len(student_data)} attempt(s).")
+                for index, row in student_data.iterrows():
+                    st.write(f"### {row['name']} - Score: {row['score']}")
+                    st.info("The teacher can now identify that this student is struggling with the subject mentioned in the name string above.")
+            st.divider()
+            st.write("### Full Leaderboard")
+            st.dataframe(ld)
 
 elif role == "👨‍👩‍👧 Parent":
-    n = st.text_input("Child Name:")
+    n = st.text_input("Enter Child Name:")
     if n:
         res = supabase.table("leaderboard").select("*").execute()
         if res.data:
-            ld = clean_lb(res.data)
-            st.table(ld[ld['Student'].str.contains(n, case=False)])
+            ld = pd.DataFrame(res.data)
+            st.table(ld[ld['name'].str.contains(n, case=False)])
 
 st.caption("VikidylEdu Centre © 2026")
