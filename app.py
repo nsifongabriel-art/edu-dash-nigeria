@@ -54,45 +54,58 @@ if role == "✍️ Student":
     if 'exam_active' not in st.session_state:
         st.header("📝 Registration")
         c1, c2 = st.columns(2)
-        with c1: sch = st.text_input("School:")
+        with c1: sch = st.text_input("School Name:")
         with c2: nm = st.text_input("Full Name (First & Surname):")
         
-        exm = st.selectbox("Exam", ["JAMB", "WAEC", "NECO", "BECE"])
-        sub = st.selectbox("Subject", sorted(df['subject'].unique().tolist()) if not df.empty else ["ENGLISH"])
+        col_y, col_e, col_s = st.columns(3)
+        with col_y: 
+            years = ["ALL YEARS"] + sorted(df['year'].unique().astype(str).tolist(), reverse=True) if not df.empty else ["2024"]
+            yr = st.selectbox("Exam Year", years)
+        with col_e: exm = st.selectbox("Exam Type", ["JAMB", "WAEC", "NECO", "BECE"])
+        with col_s: sub = st.selectbox("Subject", sorted(df['subject'].unique().tolist()) if not df.empty else ["ENGLISH"])
         
-        if st.button("🚀 START"):
+        num_q = st.slider("Number of Questions", 5, 50, 20)
+        
+        if st.button("🚀 START EXAM"):
             if not sch or len(nm.strip().split()) < 2:
-                st.error("Enter School and Full Name.")
+                st.error("Please enter School and Full Name (First & Surname).")
             else:
-                q_df = df[(df['subject'].str.upper() == sub.upper()) & (df['exam'].str.upper() == exm.upper())]
-                if not q_df.empty:
-                    st.session_state.quiz_data = q_df.sample(n=min(len(q_df), 20)).reset_index(drop=True)
-                    st.session_state.update({"exam_active": True, "start_time": time.time(), "current_q": 0, "user_answers": {}, "db_id": f"{sch} | {nm} | {sub}"})
+                # FILTER LOGIC
+                filt = (df['subject'].str.upper() == sub.upper()) & (df['exam'].str.upper() == exm.upper())
+                if yr != "ALL YEARS":
+                    filt &= (df['year'].astype(str) == yr)
+                
+                quiz_df = df[filt]
+                
+                if not quiz_df.empty:
+                    st.session_state.quiz_data = quiz_df.sample(n=min(len(quiz_df), num_q)).reset_index(drop=True)
+                    st.session_state.update({"exam_active": True, "start_time": time.time(), "current_q": 0, "user_answers": {}, "db_id": f"{sch} | {nm} | {sub} | {yr}"})
                     st.rerun()
-                else: st.warning("No questions found.")
+                else: st.warning(f"No questions found for {sub} in {yr}.")
     else:
+        # EXAM MODE
         rem = max(0, 1800 - int(time.time() - st.session_state.start_time))
         st.markdown(f"<div class='timer-text'>⏱️ {rem//60:02d}:{rem%60:02d}</div>", unsafe_allow_html=True)
         
         q_df, curr = st.session_state.quiz_data, st.session_state.current_q
         row = q_df.iloc[curr]
-        st.markdown(f"### Question {curr+1}\n{row['question']}")
-        st.session_state.user_answers[curr] = st.radio("Select:", [row['a'], row['b'], row['c'], row['d']], key=f"q_{curr}")
+        st.markdown(f"### Question {curr+1} of {len(q_df)}\n{row['question']}")
+        st.session_state.user_answers[curr] = st.radio("Select Answer:", [row['a'], row['b'], row['c'], row['d']], key=f"q_{curr}")
         
-        col1, col2, col3 = st.columns([1,1,2])
-        with col1: 
-            if st.button("⬅️ Back") and curr > 0: st.session_state.current_q -= 1; st.rerun()
-        with col2:
+        c1, c2, c3 = st.columns([1,1,2])
+        with c1: 
+            if st.button("⬅️ Previous") and curr > 0: st.session_state.current_q -= 1; st.rerun()
+        with c2:
             if st.button("Next ➡️") and curr < len(q_df)-1: st.session_state.current_q += 1; st.rerun()
-        with col3:
-            if st.button("🏁 FINISH"):
+        with c3:
+            if st.button("🏁 SUBMIT GRADE"):
                 score, script = 0, []
                 for i, r in q_df.iterrows():
-                    ans = st.session_state.user_answers.get(i, "None")
+                    ans = st.session_state.user_answers.get(i, "No Answer")
                     cor = str(r['correct_answer']).strip().upper()
                     ok = str(ans).strip().upper() == cor
                     if ok: score += 1
-                    script.append({"q": r['question'], "ua": ans, "ca": cor, "ok": ok, "ex": r.get('explanation', 'Refer to notes.')})
+                    script.append({"q": r['question'], "ua": ans, "ca": cor, "ok": ok, "ex": r.get('explanation', 'Refer to study notes.')})
                 
                 supabase.table("leaderboard").upsert({"name": st.session_state.db_id, "score": score, "script": json.dumps(script), "total_q": len(q_df)}, on_conflict="name").execute()
                 st.session_state.final_score, st.session_state.final_script = score, script
@@ -104,7 +117,7 @@ if role == "✍️ Student":
         with st.expander("🔍 Detailed Correction"):
             for item in st.session_state.final_script:
                 st.markdown(f"<div class='report-card'><b>{'✅' if item['ok'] else '❌'} {item['q']}</b><br>Correct: {item['ca']}<br><i>💡 {item['ex']}</i></div>", unsafe_allow_html=True)
-        if st.button("Restart"): st.session_state.clear(); st.rerun()
+        if st.button("Start New Exam"): st.session_state.clear(); st.rerun()
 
 # --- 6. TEACHER PORTAL ---
 elif role == "👨‍🏫 Teacher":
@@ -121,26 +134,22 @@ elif role == "👨‍🏫 Teacher":
                 row = ld[ld['name'] == sel].iloc[0]
                 scr = json.loads(row['script'])
                 st.write(get_remark(row['score'], len(scr)))
-                
-                c1, c2 = st.columns(2)
-                with c1: st.download_button("📥 Download CSV (Excel)", data=pd.DataFrame(scr).to_csv(index=False), file_name=f"{sel}.csv")
-                with c2: st.download_button("📥 Download JSON (Detailed)", data=json.dumps(scr, indent=2), file_name=f"{sel}.json")
-                
+                st.download_button("📥 Download Script (Excel)", data=pd.DataFrame(scr).to_csv(index=False), file_name=f"{sel}.csv")
                 with st.expander("🔍 Detailed Correction"):
                     for i in scr: st.write(f"{'✅' if i['ok'] else '❌'} {i['q']}")
-        else: st.info("No data.")
+        else: st.info("No records.")
 
 # --- 7. PARENT PORTAL ---
 elif role == "👨‍👩‍👧 Parent":
     s_in = st.text_input("School:")
     n_in = st.text_input("Child Name:")
-    if st.button("Find") and s_in and n_in:
+    if st.button("Find Result") and s_in and n_in:
         res = supabase.table("leaderboard").select("*").execute()
         if res.data:
             ld = pd.DataFrame(res.data)
             match = ld[(ld['name'].str.contains(s_in, case=False)) & (ld['name'].str.contains(n_in, case=False))]
             if not match.empty:
                 st.table(match[['name', 'score']])
-                for i, r in match.iterrows():
-                    st.write(f"**{r['name'].split('|')[2]}**: {get_remark(r['score'], 20)}")
-            else: st.error("Not found.")
+                for _, r in match.iterrows():
+                    st.write(f"**{r['name'].split('|')[2]} Result:** {get_remark(r['score'], 20)}")
+            else: st.error("No record found.")
