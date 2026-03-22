@@ -4,8 +4,8 @@ import time
 import json
 import plotly.express as px
 from supabase import create_client, Client
-from fpdf import FPDF
-import io
+from docx import Document
+from io import BytesIO
 
 # --- 1. SETUP ---
 URL = "https://tmbtnbxrrylulhgvnfjj.supabase.co"
@@ -23,35 +23,34 @@ def load_data():
 
 df = load_data()
 
-# --- 2. UTILITIES ---
-def create_pdf(name, score, total, script):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(200, 10, txt="VikidylEdu CBT - Detailed Correction", ln=True, align='C')
-    pdf.set_font("Arial", size=12)
-    pdf.cell(200, 10, txt=f"Student: {name}", ln=True, align='L')
-    pdf.cell(200, 10, txt=f"Final Score: {score} / {total}", ln=True, align='L')
-    pdf.ln(10)
+# --- 2. WORD DOC GENERATOR ---
+def create_docx(name, score, total, script):
+    doc = Document()
+    doc.add_heading('VikidylEdu CBT - Detailed Correction', 0)
+    doc.add_paragraph(f"Student Record: {name}")
+    doc.add_paragraph(f"Final Score: {score} / {total}")
+    
     for i, item in enumerate(script):
-        pdf.set_font("Arial", 'B', 10)
-        status = "CORRECT" if item.get('ok') else "WRONG"
-        pdf.multi_cell(0, 8, txt=f"Q{i+1}: {item.get('q', 'N/A')}", border='TLR')
-        pdf.set_font("Arial", size=10)
-        expl = item.get('ex', 'No explanation provided.')
-        pdf.multi_cell(0, 8, txt=f"Result: {status} | Correct Ans: {item.get('ca', 'N/A')}\nExplanation: {expl}", border='BLR')
-        pdf.ln(2)
-    return pdf.output(dest='S').encode('latin-1')
+        doc.add_heading(f"Question {i+1}", level=2)
+        doc.add_paragraph(f"Q: {item.get('q', 'N/A')}")
+        res = "✅ CORRECT" if item.get('ok') else "❌ INCORRECT"
+        doc.add_paragraph(f"Result: {res}")
+        doc.add_paragraph(f"Correct Answer: {item.get('ca', 'N/A')}")
+        doc.add_paragraph(f"Explanation: {item.get('ex', 'No explanation available.')}")
+    
+    bio = BytesIO()
+    doc.save(bio)
+    return bio.getvalue()
 
 def get_remark(score, total):
     if total <= 0: return ""
     pct = (score / total) * 100
-    if pct >= 80: return "🌟 **Remark:** Outstanding! You have excellent mastery."
-    elif pct >= 60: return "👍 **Remark:** Good job! Keep practicing."
-    elif pct >= 45: return "📚 **Remark:** Fair attempt. Review the corrections."
-    else: return "🛠️ **Remark:** Intensive revision required."
+    if pct >= 80: return "🌟 **Remark:** Outstanding! Master-level performance."
+    elif pct >= 60: return "👍 **Remark:** Good job! A few more revisions and you'll hit 100%."
+    elif pct >= 45: return "📚 **Remark:** Fair effort. Please review the corrections below."
+    else: return "🛠️ **Remark:** Don't be discouraged. Focus your study on the missed topics."
 
-# --- 3. UI ---
+# --- 3. UI STYLE ---
 st.set_page_config(page_title="VikidylEdu CBT", layout="wide")
 st.markdown("""<style>
     .winner-box { background-color: #FFD700; padding: 10px; border-radius: 10px; color: #000; text-align: center; font-weight: bold; margin-bottom: 8px; }
@@ -79,12 +78,12 @@ if role == "✍️ Student":
         
         cy, ce, cs = st.columns(3)
         with cy: 
-            years = ["ALL YEARS"] + sorted(df['year'].unique().astype(str).tolist(), reverse=True) if not df.empty else ["2024"]
-            yr = st.selectbox("Year", years)
-        with ce: exm = st.selectbox("Exam", ["JAMB", "WAEC", "NECO", "BECE"])
+            yrs = ["ALL YEARS"] + sorted(df['year'].unique().astype(str).tolist(), reverse=True) if not df.empty else ["2024"]
+            yr = st.selectbox("Year", yrs)
+        with ce: exm = st.selectbox("Exam Type", ["JAMB", "WAEC", "NECO", "BECE"])
         with cs: sub = st.selectbox("Subject", sorted(df['subject'].unique().tolist()) if not df.empty else ["ENGLISH"])
         
-        num_q = st.slider("Questions", 5, 50, 20)
+        num_q = st.slider("Number of Questions", 5, 50, 20)
         
         if st.button("🚀 START"):
             if not sch or len(nm.strip().split()) < 2:
@@ -99,21 +98,22 @@ if role == "✍️ Student":
                     st.rerun()
                 else: st.warning("No questions found.")
     else:
+        # EXAM TIMER
         rem = max(0, 1800 - int(time.time() - st.session_state.start_time))
         st.subheader(f"⏱️ {rem//60:02d}:{rem%60:02d}")
         
         q_df, curr = st.session_state.quiz_data, st.session_state.current_q
         row = q_df.iloc[curr]
         st.markdown(f"### Q{curr+1}: {row['question']}")
-        st.session_state.user_answers[curr] = st.radio("Select:", [row['a'], row['b'], row['c'], row['d']], key=f"q_{curr}")
+        st.session_state.user_answers[curr] = st.radio("Choose:", [row['a'], row['b'], row['c'], row['d']], key=f"q_{curr}")
         
         col1, col2, col3 = st.columns([1,1,2])
         with col1: 
-            if st.button("⬅️ Back") and curr > 0: st.session_state.current_q -= 1; st.rerun()
+            if st.button("⬅️ Previous") and curr > 0: st.session_state.current_q -= 1; st.rerun()
         with col2:
             if st.button("Next ➡️") and curr < len(q_df)-1: st.session_state.current_q += 1; st.rerun()
         with col3:
-            if st.button("🏁 FINISH"):
+            if st.button("🏁 FINISH & GRADE"):
                 score, script = 0, []
                 for i, r in q_df.iterrows():
                     ans = st.session_state.user_answers.get(i, "None")
@@ -131,14 +131,15 @@ if role == "✍️ Student":
         
         c_dl1, c_dl2 = st.columns(2)
         with c_dl1:
-            st.download_button("📥 Result (PDF)", data=create_pdf(st.session_state.db_id, st.session_state.final_score, len(st.session_state.final_script), st.session_state.final_script), file_name="Result.pdf")
+            docx_data = create_docx(st.session_state.db_id, st.session_state.final_score, len(st.session_state.final_script), st.session_state.final_script)
+            st.download_button("📥 Detailed Report (Word)", data=docx_data, file_name="Report.docx")
         with c_dl2:
-            st.download_button("📥 Result (CSV)", data=pd.DataFrame(st.session_state.final_script).to_csv(index=False), file_name="Result.csv")
+            st.download_button("📥 Raw Data (CSV)", data=pd.DataFrame(st.session_state.final_script).to_csv(index=False), file_name="Result.csv")
             
         with st.expander("🔍 Detailed Correction"):
             for item in st.session_state.final_script:
                 st.markdown(f"<div class='report-card'><b>{'✅' if item['ok'] else '❌'} {item['q']}</b><br>Correct: {item['ca']}<br><i>💡 {item['ex']}</i></div>", unsafe_allow_html=True)
-        if st.button("Restart"): st.session_state.clear(); st.rerun()
+        if st.button("New Exam"): st.session_state.clear(); st.rerun()
 
 # --- 6. TEACHER PORTAL ---
 elif role == "👨‍🏫 Teacher":
@@ -154,15 +155,15 @@ elif role == "👨‍🏫 Teacher":
                 row = ld[ld['name'] == sel].iloc[0]
                 scr = json.loads(row['script'])
                 st.write(get_remark(row['score'], len(scr)))
-                st.download_button("📥 PDF Report", data=create_pdf(row['name'], row['score'], len(scr), scr), file_name=f"{sel}.pdf")
-                st.download_button("📥 CSV Data", data=pd.DataFrame(scr).to_csv(index=False), file_name=f"{sel}.csv")
+                st.download_button("📥 Download Word Report", data=create_docx(row['name'], row['score'], len(scr), scr), file_name=f"{sel}.docx")
+                st.download_button("📥 Download CSV", data=pd.DataFrame(scr).to_csv(index=False), file_name=f"{sel}.csv")
         else: st.info("No records.")
 
 # --- 7. PARENT PORTAL ---
 elif role == "👨‍👩‍👧 Parent":
     s_in = st.text_input("School:")
     n_in = st.text_input("Child Name:")
-    if st.button("Search") and s_in and n_in:
+    if st.button("Find Result") and s_in and n_in:
         res = supabase.table("leaderboard").select("*").execute()
         if res.data:
             ld = pd.DataFrame(res.data)
@@ -170,7 +171,7 @@ elif role == "👨‍👩‍👧 Parent":
             if not match.empty:
                 st.table(match[['name', 'score']])
                 for _, r in match.iterrows():
-                    st.write(get_remark(r['score'], 20))
                     p_scr = json.loads(r['script'])
-                    st.download_button(f"📥 Report for {r['name'].split('|')[2]}", data=create_pdf(r['name'], r['score'], len(p_scr), p_scr), file_name="Report.pdf")
+                    st.write(get_remark(r['score'], len(p_scr)))
+                    st.download_button(f"📥 Get Report for {r['name'].split('|')[1]}", data=create_docx(r['name'], r['score'], len(p_scr), p_scr), file_name="Report.docx")
             else: st.error("No record found.")
