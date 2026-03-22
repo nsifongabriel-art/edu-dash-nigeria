@@ -53,33 +53,40 @@ with st.sidebar:
     st.divider()
     role = st.selectbox("Switch Role", ["✍️ Student", "👨‍🏫 Teacher", "👨‍👩‍👧 Parent"])
 
-# --- 4. STUDENT PORTAL (RESTORED FORM) ---
+# --- 4. STUDENT PORTAL ---
 if role == "✍️ Student":
     if 'exam_active' not in st.session_state:
         st.header("📝 Student Registration")
         c1, c2 = st.columns(2)
-        with c1: school = st.text_input("School Name:")
-        with c2: name = st.text_input("Student Full Name:")
+        with c1: school = st.text_input("School Name (Required):")
+        with c2: name = st.text_input("Full Name (Firstname & Surname):")
         
         y_col, e_col, s_col = st.columns(3)
         with y_col: year_choice = st.selectbox("Exam Year", ["ALL YEARS (Mixed)"] + sorted(df['year'].unique().astype(str).tolist(), reverse=True) if not df.empty else ["2024"])
         with e_col: exam_type = st.selectbox("Exam Type", ["JAMB", "WAEC", "NECO", "BECE"])
         with s_col: subj = st.selectbox("Select Subject", MASTER_SUBJECTS)
         
-        if st.button("🚀 START EXAM") and school and name:
-            filt = (df['subject'].str.upper() == subj) & (df['exam'].str.upper() == exam_type)
-            if year_choice != "ALL YEARS (Mixed)": filt &= (df['year'].astype(str) == year_choice)
-            quiz_df = df[filt]
-            
-            if not quiz_df.empty:
-                st.session_state.quiz_data = quiz_df.sample(n=min(len(quiz_df), 20)).reset_index(drop=True)
-                st.session_state.exam_active, st.session_state.start_time, st.session_state.current_q = True, time.time(), 0
-                st.session_state.user_answers = {}
-                st.session_state.db_id = f"{school} | {name} | {subj} | {year_choice}"
-                st.rerun()
-            else: st.warning(f"🚧 No questions found for {subj} {year_choice}.")
+        if st.button("🚀 START EXAM"):
+            # CHECK: Does the name have at least two parts?
+            name_parts = name.strip().split()
+            if not school:
+                st.error("❌ Please enter your School Name.")
+            elif len(name_parts) < 2:
+                st.error("❌ Please enter both your First Name and Surname.")
+            else:
+                filt = (df['subject'].str.upper() == subj) & (df['exam'].str.upper() == exam_type)
+                if year_choice != "ALL YEARS (Mixed)": filt &= (df['year'].astype(str) == year_choice)
+                quiz_df = df[filt]
+                
+                if not quiz_df.empty:
+                    st.session_state.quiz_data = quiz_df.sample(n=min(len(quiz_df), 20)).reset_index(drop=True)
+                    st.session_state.exam_active, st.session_state.start_time, st.session_state.current_q = True, time.time(), 0
+                    st.session_state.user_answers = {}
+                    st.session_state.db_id = f"{school.strip()} | {name.strip()} | {subj} | {year_choice}"
+                    st.rerun()
+                else: st.warning(f"🚧 No questions found for {subj} {year_choice}.")
     else:
-        # EXAM QUESTIONS
+        # (Standard Exam Code Remains Here...)
         q_df, curr = st.session_state.quiz_data, st.session_state.current_q
         q = q_df.iloc[curr]
         st.write(f"Question {curr+1} of {len(q_df)}")
@@ -107,7 +114,7 @@ if role == "✍️ Student":
                     u_a = st.session_state.user_answers.get(i, "None")
                     is_correct = str(u_a).strip().upper() == str(row['correct_answer']).strip().upper()
                     if is_correct: score += 1
-                    script_data.append({"q": row['question'], "ua": u_a, "ca": row['correct_answer'], "ok": is_correct, "topic": row.get('topic', 'General')})
+                    script_data.append({"q": row['question'], "ua": u_a, "ca": row['correct_answer'], "ok": is_correct})
                 
                 try:
                     supabase.table("leaderboard").upsert({"name": st.session_state.db_id, "score": score, "script": json.dumps(script_data), "total_q": len(q_df)}, on_conflict="name").execute()
@@ -117,10 +124,9 @@ if role == "✍️ Student":
 
     if 'final_score' in st.session_state:
         st.success(f"Score: {st.session_state.final_score} / {len(st.session_state.final_script)}")
-        st.info(get_remark(st.session_state.final_score, len(st.session_state.final_script)))
         if st.button("Restart"): st.session_state.clear(); st.rerun()
 
-# --- 5. TEACHER PORTAL (RESTORED ANALYSIS) ---
+# --- 5. TEACHER PORTAL ---
 elif role == "👨‍🏫 Teacher":
     st.header("Teacher Diagnostic Suite")
     if st.text_input("Access Key:", type="password") == "Lagos2026":
@@ -129,29 +135,42 @@ elif role == "👨‍🏫 Teacher":
             ld = pd.DataFrame(res.data)
             ld['Subject'] = ld['name'].apply(lambda x: x.split('|')[2].strip() if '|' in x else "General")
             
-            # CHART
             st.subheader("Performance by Subject")
             fig = px.bar(ld.groupby('Subject')['score'].mean().reset_index(), x='Subject', y='score', color='Subject')
             st.plotly_chart(fig, use_container_width=True)
             
-            # AUDIT
-            st.subheader("Student Records")
-            sel = st.selectbox("Select Student to Audit:", ["-- Select --"] + ld['name'].tolist())
+            st.subheader("Student Audit")
+            sel = st.selectbox("Select Student:", ["-- Select --"] + ld['name'].tolist())
             if sel != "-- Select --":
                 row = ld[ld['name'] == sel].iloc[0]
                 st.write(f"**Remark:** {get_remark(row['score'], row.get('total_q', 10))}")
-                st.dataframe(ld[ld['name'] == sel][['name', 'score']])
-        else: st.info("No data yet.")
+                st.write(f"**Total Questions:** {row.get('total_q', 'N/A')}")
+        else: st.info("No records found.")
 
-# --- 6. PARENT PORTAL (RESTORED) ---
+# --- 6. PARENT PORTAL (SECURE QUERY) ---
 elif role == "👨‍👩‍👧 Parent":
-    st.header("Parent Portal")
-    child = st.text_input("Enter Child's Name:")
-    if child:
-        res = supabase.table("leaderboard").select("*").execute()
-        if res.data:
-            ld = pd.DataFrame(res.data)
-            res_df = ld[ld['name'].str.contains(child, case=False)]
-            if not res_df.empty:
-                st.table(res_df[['name', 'score']])
-            else: st.warning("No records found.")
+    st.header("Parent Result Checker")
+    st.info("Please enter your child's school and full name to view results.")
+    
+    p_school = st.text_input("Child's School Name:")
+    p_child = st.text_input("Child's Full Name (As registered):")
+    
+    if st.button("🔍 Check Result"):
+        if not p_school or not p_child:
+            st.warning("Please enter both the School Name and Student Name.")
+        else:
+            res = supabase.table("leaderboard").select("*").execute()
+            if res.data:
+                ld = pd.DataFrame(res.data)
+                # Query matches both school and name columns
+                res_df = ld[(ld['name'].str.contains(p_school, case=False)) & 
+                            (ld['name'].str.contains(p_child, case=False))]
+                
+                if not res_df.empty:
+                    st.success(f"Displaying results for {p_child} at {p_school}:")
+                    # Clean up name for parent view
+                    display_df = res_df.copy()
+                    display_df['Subject'] = display_df['name'].apply(lambda x: x.split('|')[2].strip() if '|' in x else "N/A")
+                    st.table(display_df[['Subject', 'score']])
+                else:
+                    st.error("No matching records found. Please check the spelling or school name.")
