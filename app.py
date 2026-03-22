@@ -23,34 +23,35 @@ def load_data():
 
 df = load_data()
 
-# --- 2. DOWNLOAD UTILITIES ---
+# --- 2. UTILITIES ---
 def create_pdf(name, score, total, script):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(200, 10, txt="VikidylEdu CBT - Detailed Correction", ln=True, align='C')
     pdf.set_font("Arial", size=12)
-    pdf.cell(200, 10, txt=f"Student ID: {name}", ln=True, align='L')
+    pdf.cell(200, 10, txt=f"Student: {name}", ln=True, align='L')
     pdf.cell(200, 10, txt=f"Final Score: {score} / {total}", ln=True, align='L')
     pdf.ln(10)
     for i, item in enumerate(script):
         pdf.set_font("Arial", 'B', 10)
-        status = "CORRECT" if item['ok'] else "INCORRECT"
-        pdf.multi_cell(0, 8, txt=f"Q{i+1}: {item['q']}", border='TLR')
+        status = "CORRECT" if item.get('ok') else "WRONG"
+        pdf.multi_cell(0, 8, txt=f"Q{i+1}: {item.get('q', 'N/A')}", border='TLR')
         pdf.set_font("Arial", size=10)
-        pdf.multi_cell(0, 8, txt=f"Result: {status} | Correct Ans: {item['ca']}\nExplanation: {item['ex']}", border='BLR')
+        expl = item.get('ex', 'No explanation provided.')
+        pdf.multi_cell(0, 8, txt=f"Result: {status} | Correct Ans: {item.get('ca', 'N/A')}\nExplanation: {expl}", border='BLR')
         pdf.ln(2)
     return pdf.output(dest='S').encode('latin-1')
 
 def get_remark(score, total):
     if total <= 0: return ""
     pct = (score / total) * 100
-    if pct >= 80: return "🌟 **Remark:** Outstanding mastery shown!"
-    elif pct >= 60: return "👍 **Remark:** Good job! Minor review needed."
-    elif pct >= 45: return "📚 **Remark:** Fair effort. Study corrections."
+    if pct >= 80: return "🌟 **Remark:** Outstanding! You have excellent mastery."
+    elif pct >= 60: return "👍 **Remark:** Good job! Keep practicing."
+    elif pct >= 45: return "📚 **Remark:** Fair attempt. Review the corrections."
     else: return "🛠️ **Remark:** Intensive revision required."
 
-# --- 3. UI STYLING ---
+# --- 3. UI ---
 st.set_page_config(page_title="VikidylEdu CBT", layout="wide")
 st.markdown("""<style>
     .winner-box { background-color: #FFD700; padding: 10px; border-radius: 10px; color: #000; text-align: center; font-weight: bold; margin-bottom: 8px; }
@@ -148,10 +149,11 @@ elif role == "👨‍🏫 Teacher":
             ld['Subject'] = ld['name'].apply(lambda x: x.split('|')[2].strip() if '|' in x else "N/A")
             st.plotly_chart(px.bar(ld.groupby('Subject')['score'].mean().reset_index(), x='Subject', y='score', color='Subject'))
             
-            sel = st.selectbox("Student:", ["-- Select --"] + ld['name'].tolist())
+            sel = st.selectbox("Student Audit:", ["-- Select --"] + ld['name'].tolist())
             if sel != "-- Select --":
                 row = ld[ld['name'] == sel].iloc[0]
                 scr = json.loads(row['script'])
+                st.write(get_remark(row['score'], len(scr)))
                 st.download_button("📥 PDF Report", data=create_pdf(row['name'], row['score'], len(scr), scr), file_name=f"{sel}.pdf")
                 st.download_button("📥 CSV Data", data=pd.DataFrame(scr).to_csv(index=False), file_name=f"{sel}.csv")
         else: st.info("No records.")
