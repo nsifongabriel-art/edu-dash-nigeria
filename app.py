@@ -12,7 +12,7 @@ URL = "https://tmbtnbxrrylulhgvnfjj.supabase.co"
 KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRtYnRuYnhycnlsdWxoZ3ZuZmpqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQxMDQ2ODcsImV4cCI6MjA4OTY4MDY4N30.Fd1TPTCjN2u-_EOmkkqOb3TAKW8Q5RGv0AtAA85jW4s"
 supabase: Client = create_client(URL, KEY)
 
-# FIXED LINK: Changed 'pubhtml' to 'pub?output=csv'
+# CORRECTED LINK: I changed your 'pubhtml' to 'pub?output=csv'
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSeTbSBHxYsciOesGpXt6ATZm_5aWVHQrS7tIFIaibmU4MZU-otPRsxUXG4egEP7P7jXdtL6CHhytAw/pub?output=csv"
 
 @st.cache_data(ttl=1)
@@ -27,7 +27,7 @@ def load_data():
 
 df = load_data()
 
-# --- 2. WORD DOC GENERATOR ---
+# --- 2. WORD DOC GENERATOR (Fixes Unicode Crashes) ---
 def create_docx(name, score, total, script):
     doc = Document()
     doc.add_heading('VikidylEdu CBT - Report Card', 0)
@@ -35,7 +35,6 @@ def create_docx(name, score, total, script):
     doc.add_paragraph(f"Score: {score} / {total}")
     for i, item in enumerate(script):
         doc.add_heading(f"Question {i+1}", level=2)
-        doc.add_paragraph(f"Q: {item.get('q', 'N/A')}")
         status = "✅ CORRECT" if item.get('ok') else "❌ INCORRECT"
         doc.add_paragraph(f"Result: {status} | Correct Answer: {item.get('ca', 'N/A')}")
         doc.add_paragraph(f"Explanation: {item.get('ex', 'N/A')}")
@@ -50,61 +49,55 @@ st.markdown("""<style>
     .weak-topic { color: #cf1322; font-weight: bold; background-color: #fff1f0; padding: 2px 5px; border-radius: 4px; }
 </style>""", unsafe_allow_html=True)
 
-# --- 4. SIDEBAR ---
+# --- 4. SIDEBAR (Verification Tool) ---
 with st.sidebar:
     st.title("VikidylEdu")
     if df is not None:
-        st.success("✅ Database Connected")
+        st.success("✅ Database: CONNECTED")
     else:
-        st.error("❌ Database Error: Check CSV Link")
+        st.error("❌ Database: OFFLINE (Check Sheet Settings)")
     
-    try:
-        res = supabase.table("leaderboard").select("name, score").order("score", desc=True).limit(3).execute()
-        for i, entry in enumerate(res.data):
-            n = entry['name'].split('|')[1].strip() if '|' in entry['name'] else entry['name']
-            st.markdown(f"<div class='winner-box'>#{i+1} {n}: {entry['score']}</div>", unsafe_allow_html=True)
-    except: pass
-    role = st.selectbox("Portal", ["✍️ Student", "👨‍🏫 Teacher", "👨‍👩‍👧 Parent"])
+    role = st.selectbox("Portal", ["✍️ Student", "👨‍🏫 Teacher"])
 
 # --- 5. STUDENT PORTAL ---
 if role == "✍️ Student":
     if 'exam_active' not in st.session_state and 'final_score' not in st.session_state:
-        st.header("📝 Student Registration")
+        st.header("📝 Registration")
         c1, c2 = st.columns(2)
-        with c1: sch = st.text_input("School Name:")
-        with c2: nm = st.text_input("Full Name:")
+        with c1: sch = st.text_input("School:")
+        with c2: nm = st.text_input("Name:")
         
         cy, ce, cs = st.columns(3)
-        with cy: 
+        with cy:
             yrs = ["ALL YEARS"] + sorted(df['year'].unique().astype(str).tolist(), reverse=True) if df is not None else ["2024"]
-            yr = st.selectbox("Exam Year", yrs)
-        with ce: exm = st.selectbox("Exam Type", ["JAMB", "WAEC", "NECO", "BECE"])
-        with cs: 
+            yr = st.selectbox("Year", yrs)
+        with ce:
+            exm = st.selectbox("Exam", ["JAMB", "WAEC", "NECO", "BECE"])
+        with cs:
+            # SHIELD: This prevents the 'sub_list' crash from your screenshot
             if df is not None and 'subject' in df.columns:
                 sub_list = sorted(df['subject'].unique().tolist())
             else:
-                sub_list = ["Error Loading Subjects"]
-            sub = st.selectbox("Select Subject", sub_list)
-        
-        num_q = st.slider("Select Question Count", 5, 50, 20) if yr == "ALL YEARS" else 50
-        
-        if st.button("🚀 START EXAM"):
-            if not sch or not nm or sub == "Error Loading Subjects":
-                st.error("Please ensure all fields are filled and data is loaded.")
+                sub_list = ["English", "Mathematics", "Biology"] # Default options if sheet fails
+            sub = st.selectbox("Subject", sub_list)
+
+        if st.button("🚀 START"):
+            if not sch or not nm: st.error("Enter School and Name.")
+            elif df is None: st.error("App cannot see your Sheet. Please fix publication settings.")
             else:
                 filt = (df['subject'].str.upper() == sub.upper()) & (df['exam'].str.upper() == exm.upper())
                 if yr != "ALL YEARS": filt &= (df['year'].astype(str) == yr)
                 q_df = df[filt]
                 if not q_df.empty:
-                    limit = min(len(q_df), num_q)
-                    st.session_state.quiz_data = q_df.sample(n=limit).reset_index(drop=True)
-                    st.session_state.update({"exam_active": True, "start_time": time.time(), "current_q": 0, "user_answers": {}, "db_id": f"{sch} | {nm} | {sub} | {yr}"})
+                    st.session_state.quiz_data = q_df.sample(n=min(len(q_df), 20)).reset_index(drop=True)
+                    st.session_state.update({"exam_active": True, "start_time": time.time(), "current_q": 0, "user_answers": {}, "db_id": f"{sch}|{nm}|{sub}"})
                     st.rerun()
                 else: st.warning("No questions found for this selection.")
 
     elif 'exam_active' in st.session_state:
+        # --- EXAM INTERFACE ---
         rem = max(0, 1800 - int(time.time() - st.session_state.start_time))
-        st.subheader(f"⏱️ Time: {rem//60:02d}:{rem%60:02d}")
+        st.subheader(f"⏱️ {rem//60:02d}:{rem%60:02d}")
         q_df, curr = st.session_state.quiz_data, st.session_state.current_q
         row = q_df.iloc[curr]
 
@@ -116,7 +109,7 @@ if role == "✍️ Student":
         
         c1, c2, c3 = st.columns([1,1,2])
         with c1: 
-            if st.button("⬅️ Back") and curr > 0: st.session_state.current_q -= 1; st.rerun()
+            if st.button("⬅️ Previous") and curr > 0: st.session_state.current_q -= 1; st.rerun()
         with c2:
             if st.button("Next ➡️") and curr < len(q_df)-1: st.session_state.current_q += 1; st.rerun()
         with c3:
@@ -127,7 +120,7 @@ if role == "✍️ Student":
                     cor = str(r['correct_answer']).strip().upper()
                     ok = str(ans).strip().upper() == cor
                     if ok: score += 1
-                    script.append({"q": r['question'], "ua": ans, "ca": cor, "ok": ok, "ex": r.get('explanation', 'N/A'), "topic": r.get('topic', 'Revision')})
+                    script.append({"q": r['question'], "ua": ans, "ca": cor, "ok": ok, "ex": r.get('explanation', 'N/A'), "topic": r.get('topic', 'General')})
                 supabase.table("leaderboard").upsert({"name": st.session_state.db_id, "score": score, "script": json.dumps(script), "total_q": len(q_df)}, on_conflict="name").execute()
                 st.session_state.update({"final_score": score, "final_script": script})
                 del st.session_state['exam_active']; st.rerun()
@@ -136,22 +129,16 @@ if role == "✍️ Student":
         st.balloons()
         score, total = st.session_state.final_score, len(st.session_state.final_script)
         st.markdown(f"<h1 style='text-align: center;'>Score: {score} / {total}</h1>", unsafe_allow_html=True)
-        
-        t1, t2, t3 = st.tabs(["📊 Performance", "🔍 Corrections", "📥 Result"])
+        t1, t2 = st.tabs(["📊 Performance", "🔍 Corrections"])
         with t1:
             s_df = pd.DataFrame(st.session_state.final_script)
-            weaks = s_df[s_df['ok'] == False]['topic'].unique()
-            if len(weaks) > 0:
-                st.warning("⚠️ Review these topics:")
-                for w in weaks: st.markdown(f"- <span class='weak-topic'>{w}</span>", unsafe_allow_html=True)
             st.plotly_chart(px.pie(values=[score, total-score], names=['Correct', 'Incorrect'], hole=0.5))
         with t2:
             for i, item in enumerate(st.session_state.final_script):
                 with st.expander(f"{'✅' if item['ok'] else '❌'} Q{i+1}"):
-                    st.write(f"**Q:** {item['q']}\n\n**Correct:** {item['ca']}\n\n**Info:** {item['ex']}")
-        with t3:
+                    st.write(f"**Q:** {item['q']}\n\n**Correct:** {item['ca']}")
             docx = create_docx(st.session_state.db_id, score, total, st.session_state.final_script)
-            st.download_button("📥 Download Word Report", data=docx, file_name="Result.docx")
+            st.download_button("📥 Download Report (Word)", data=docx, file_name="Result.docx")
             if st.button("New Exam"): st.session_state.clear(); st.rerun()
 
 elif role == "👨‍🏫 Teacher":
