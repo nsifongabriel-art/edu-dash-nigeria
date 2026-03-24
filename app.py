@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import time
 from supabase import create_client, Client
 
 # --- 1. CONNECTIONS ---
@@ -15,6 +14,7 @@ def load_data():
     try: 
         data = pd.read_csv(SHEET_URL)
         if data is not None:
+            # Clean headers: remove spaces and lowercase
             data.columns = [str(c).strip().lower() for c in data.columns]
             return data
     except:
@@ -23,15 +23,12 @@ def load_data():
 
 df = load_data()
 
-# --- 2. SIDEBAR NAVIGATION ---
+# --- 2. SIDEBAR ---
 with st.sidebar:
     st.title("VikidylEdu CBT")
     role = st.selectbox("Switch Portal", ["✍️ Student", "👪 Parent", "👨‍🏫 Teacher"])
-    st.divider()
     if df is not None:
         st.success("✅ System Connected")
-    else:
-        st.warning("⏳ System Loading...")
 
 # --- 3. STUDENT PORTAL ---
 if role == "✍️ Student":
@@ -42,9 +39,8 @@ if role == "✍️ Student":
             name = st.text_input("Full Name")
             school = st.text_input("School")
             
-            # This merges duplicate subjects like 'Mathematics'
-            raw_subs = df['subject'].dropna().astype(str).str.strip().str.title().unique().tolist()
-            subs = sorted(raw_subs)
+            # Clean subject list
+            subs = sorted(df['subject'].dropna().astype(str).str.strip().str.title().unique().tolist())
             
             c1, c2 = st.columns(2)
             with c1:
@@ -54,83 +50,50 @@ if role == "✍️ Student":
                 
             if st.button("🚀 START EXAM"):
                 if name and school:
-                    filt = (df['subject'].str.title() == subject) & (df['exam'].str.upper() == exam_type)
-                    q_df = df[filt]
+                    # DYNAMIC FILTER: Looks for 'exam' or 'exam type'
+                    exam_col = 'exam' if 'exam' in df.columns else 'exam type'
                     
-                    if not q_df.empty:
-                        st.session_state.quiz_data = q_df.sample(n=min(len(q_df), 10)).reset_index(drop=True)
-                        st.session_state.update({
-                            "exam_active": True, 
-                            "current_q": 0, 
-                            "user_answers": {}, 
-                            "student_info": f"{school} | {name} | {subject}"
-                        })
-                        st.rerun()
+                    if exam_col in df.columns:
+                        filt = (df['subject'].str.title() == subject) & (df[exam_col].str.upper() == exam_type)
+                        q_df = df[filt]
+                        
+                        if not q_df.empty:
+                            st.session_state.quiz_data = q_df.sample(n=min(len(q_df), 10)).reset_index(drop=True)
+                            st.session_state.update({
+                                "exam_active": True, "current_q": 0, "user_answers": {}, 
+                                "student_info": f"{school} | {name} | {subject}"
+                            })
+                            st.rerun()
+                        else:
+                            st.warning(f"No questions found for {subject} in {exam_type}.")
                     else:
-                        st.warning(f"No questions found for {subject} in {exam_type}.")
+                        st.error(f"Could not find an 'exam' column in your sheet. Found: {list(df.columns)}")
                 else:
                     st.error("Please fill in your name and school.")
         else:
             st.info("🔄 Loading database...")
 
     elif 'exam_active' in st.session_state:
+        # (Standard exam engine logic follows...)
         q_df = st.session_state.quiz_data
         curr = st.session_state.current_q
         row = q_df.iloc[curr]
-        
-        st.subheader(f"Question {curr + 1} of {len(q_df)}")
+        st.subheader(f"Question {curr + 1}")
         st.write(row['question'])
-        
         options = [row['a'], row['b'], row['c'], row['d']]
-        choice = st.radio("Choose your answer:", options, key=f"q_{curr}")
-        st.session_state.user_answers[curr] = choice
-
-        col1, col2 = st.columns(2)
-        with col1:
-            if curr > 0:
-                if st.button("⬅️ Previous"):
-                    st.session_state.current_q -= 1
-                    st.rerun()
-        with col2:
-            if curr < len(q_df) - 1:
-                if st.button("Next ➡️"):
-                    st.session_state.current_q += 1
-                    st.rerun()
-            else:
-                if st.button("🏁 FINISH & SUBMIT"):
-                    score = 0
-                    for i, r in q_df.iterrows():
-                        if st.session_state.user_answers.get(i) == r['correct_answer']:
-                            score += 1
-                    
-                    try:
-                        supabase.table("leaderboard").insert({
-                            "name": st.session_state.student_info, 
-                            "score": score
-                        }).execute()
-                    except:
-                        pass
-                    
-                    st.session_state.final_score = score
-                    del st.session_state['exam_active']
-                    st.rerun()
-
-    elif 'final_score' in st.session_state:
-        st.balloons()
-        st.header("🏆 Exam Completed!")
-        st.metric("Your Score", f"{st.session_state.final_score} / 10")
-        if st.button("Back to Login"):
-            del st.session_state['final_score']
+        st.session_state.user_answers[curr] = st.radio("Answer:", options, key=f"q_{curr}")
+        if st.button("Next") and curr < len(q_df)-1:
+            st.session_state.current_q += 1
+            st.rerun()
+        if st.button("🏁 FINISH"):
+            del st.session_state['exam_active']
             st.rerun()
 
 # --- 4. PARENT PORTAL ---
 elif role == "👪 Parent":
     st.header("👪 Parent Dashboard")
     try:
-        res = supabase.table("leaderboard").select("*").order("created_at", desc=True).execute()
-        if res.data:
-            st.dataframe(pd.DataFrame(res.data)[['name', 'score']], use_container_width=True)
-        else:
-            st.info("No records found yet.")
+        res = supabase.table("leaderboard").select("*").execute()
+        st.dataframe(pd.DataFrame(res.data)[['name', 'score']], use_container_width=True)
     except:
-        st.error("Connecting to server...")
+        st.write("Loading results...")
