@@ -8,7 +8,6 @@ URL = "https://tmbtnbxrrylulhgvnfjj.supabase.co"
 KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRtYnRuYnhycnlsdWxoZ3ZuZmpqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQxMDQ2ODcsImV4cCI6MjA4OTY4MDY4N30.Fd1TPTCjN2u-_EOmkkqOb3TAKW8Q5RGv0AtAA85jW4s"
 supabase: Client = create_client(URL, KEY)
 
-# Your verified Google Sheet CSV link
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSeTbSBHxYsciOesGpXt6ATZm_5aWVHQrS7tIFIaibmU4MZU-otPRsxUXG4egEP7P7jXdtL6CHhytAw/pub?output=csv"
 
 @st.cache_data(ttl=5)
@@ -16,7 +15,6 @@ def load_data():
     try: 
         data = pd.read_csv(SHEET_URL)
         if data is not None:
-            # Clean headers: remove spaces and lowercase everything
             data.columns = [str(c).strip().lower() for c in data.columns]
             return data
     except:
@@ -37,7 +35,6 @@ with st.sidebar:
 
 # --- 3. STUDENT PORTAL ---
 if role == "✍️ Student":
-    # If exam hasn't started and no final score is shown
     if 'exam_active' not in st.session_state and 'final_score' not in st.session_state:
         st.header("✍️ Student Registration")
         
@@ -45,7 +42,7 @@ if role == "✍️ Student":
             name = st.text_input("Full Name")
             school = st.text_input("School")
             
-            # FIX: Merge duplicate 'Mathematics' and sort
+            # This merges duplicate subjects like 'Mathematics'
             raw_subs = df['subject'].dropna().astype(str).str.strip().str.title().unique().tolist()
             subs = sorted(raw_subs)
             
@@ -57,12 +54,10 @@ if role == "✍️ Student":
                 
             if st.button("🚀 START EXAM"):
                 if name and school:
-                    # Filter questions based on selection
                     filt = (df['subject'].str.title() == subject) & (df['exam'].str.upper() == exam_type)
                     q_df = df[filt]
                     
                     if not q_df.empty:
-                        # Pick 10 random questions
                         st.session_state.quiz_data = q_df.sample(n=min(len(q_df), 10)).reset_index(drop=True)
                         st.session_state.update({
                             "exam_active": True, 
@@ -78,7 +73,6 @@ if role == "✍️ Student":
         else:
             st.info("🔄 Loading database...")
 
-    # THE EXAM ENGINE
     elif 'exam_active' in st.session_state:
         q_df = st.session_state.quiz_data
         curr = st.session_state.current_q
@@ -87,7 +81,6 @@ if role == "✍️ Student":
         st.subheader(f"Question {curr + 1} of {len(q_df)}")
         st.write(row['question'])
         
-        # Display Options
         options = [row['a'], row['b'], row['c'], row['d']]
         choice = st.radio("Choose your answer:", options, key=f"q_{curr}")
         st.session_state.user_answers[curr] = choice
@@ -105,11 +98,39 @@ if role == "✍️ Student":
                     st.rerun()
             else:
                 if st.button("🏁 FINISH & SUBMIT"):
-                    # Calculate Score
                     score = 0
                     for i, r in q_df.iterrows():
                         if st.session_state.user_answers.get(i) == r['correct_answer']:
                             score += 1
                     
-                    # Save to Supabase Leaderboard
-                    supabase.
+                    try:
+                        supabase.table("leaderboard").insert({
+                            "name": st.session_state.student_info, 
+                            "score": score
+                        }).execute()
+                    except:
+                        pass
+                    
+                    st.session_state.final_score = score
+                    del st.session_state['exam_active']
+                    st.rerun()
+
+    elif 'final_score' in st.session_state:
+        st.balloons()
+        st.header("🏆 Exam Completed!")
+        st.metric("Your Score", f"{st.session_state.final_score} / 10")
+        if st.button("Back to Login"):
+            del st.session_state['final_score']
+            st.rerun()
+
+# --- 4. PARENT PORTAL ---
+elif role == "👪 Parent":
+    st.header("👪 Parent Dashboard")
+    try:
+        res = supabase.table("leaderboard").select("*").order("created_at", desc=True).execute()
+        if res.data:
+            st.dataframe(pd.DataFrame(res.data)[['name', 'score']], use_container_width=True)
+        else:
+            st.info("No records found yet.")
+    except:
+        st.error("Connecting to server...")
