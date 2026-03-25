@@ -24,7 +24,7 @@ with st.sidebar:
     st.title("VikidylEdu CBT")
     role = st.selectbox("Switch Portal", ["✍️ Student", "👪 Parent", "👨‍🏫 Teacher"])
 
-# --- 3. STUDENT PORTAL (With 20-Minute Timer) ---
+# --- 3. STUDENT PORTAL ---
 if role == "✍️ Student":
     if 'exam_active' not in st.session_state and 'final_score' not in st.session_state:
         st.header("✍️ Student Registration")
@@ -36,7 +36,7 @@ if role == "✍️ Student":
             
             c1, c2 = st.columns(2)
             with c1: subject = st.selectbox("Subject", subs)
-            with c2: year_p = st.selectbox("Year", years)
+            with c2: year_p = st.selectbox("Exam Year", years)
             exam_p = st.selectbox("Exam Type", ["JAMB", "WAEC", "NECO", "BECE"])
             
             if st.button("🚀 START EXAM"):
@@ -45,79 +45,67 @@ if role == "✍️ Student":
                 q_df = df[filt]
                 
                 if not q_df.empty:
-                    st.session_state.quiz_data = q_df.sample(n=min(len(q_df), 30)).reset_index(drop=True)
+                    st.session_state.quiz_data = q_df.sample(n=min(len(q_df), 40)).reset_index(drop=True)
                     st.session_state.update({
                         "exam_active": True, "current_q": 0, "user_answers": {}, 
-                        "start_time": time.time(), "info": f"{school} | {name} | {subject}"
+                        "start_time": time.time(), "info": f"{school} | {name} | {subject} | {exam_p}"
                     })
                     st.rerun()
+                else: st.warning("No questions found for this selection.")
 
     elif 'exam_active' in st.session_state:
-        # --- TIMER LOGIC (20 Minutes) ---
+        # ⏱️ 40 MINUTE TIMER
         elapsed = time.time() - st.session_state.start_time
-        remaining = max(0, 1200 - int(elapsed)) # 1200s = 20 mins
+        remaining = max(0, 2400 - int(elapsed)) # 2400s = 40 mins
         mins, secs = divmod(remaining, 60)
         st.metric("⏳ Time Remaining", f"{mins:02d}:{secs:02d}")
         
         if remaining <= 0:
-            st.error("⏰ Time is up! Submitting automatically...")
-            time.sleep(2)
-            # (Auto-submit logic follows same as FINISH button)
-
+            st.error("⏰ Time Expired! Submitting...")
+            # Auto-submit logic...
+        
         q_df, curr = st.session_state.quiz_data, st.session_state.current_q
+        row = q_df.iloc[curr]
         st.subheader(f"Question {curr+1} of {len(q_df)}")
-        st.write(q_df.iloc[curr]['question'])
-        opts = [q_df.iloc[curr]['a'], q_df.iloc[curr]['b'], q_df.iloc[curr]['c'], q_df.iloc[curr]['d']]
-        st.session_state.user_answers[curr] = st.radio("Choose Answer:", opts, key=f"q_{curr}")
+        st.write(row['question'])
+        st.session_state.user_answers[curr] = st.radio("Choose:", [row['a'], row['b'], row['c'], row['d']], key=f"q_{curr}")
         
         if st.button("Next ➡️") and curr < len(q_df)-1:
             st.session_state.current_q += 1; st.rerun()
-        if st.button("🏁 FINISH & SUBMIT"):
+        if st.button("🏁 FINISH"):
             score = sum(1 for i, r in q_df.iterrows() if st.session_state.user_answers.get(i) == r['correct_answer'])
-            # Diagnostic: Identify missed topics
-            missed = [r.get('topic', 'General') for i, r in q_df.iterrows() if st.session_state.user_answers.get(i) != r['correct_answer']]
-            
             try:
-                supabase.table("leaderboard").insert({
-                    "name": st.session_state.info, "score": score, 
-                    "remarks": f"Needs help with: {', '.join(list(set(missed))[:3])}"
-                }).execute()
+                supabase.table("leaderboard").insert({"name": st.session_state.info, "score": score}).execute()
             except: pass
-            
-            st.session_state.final_score = score
-            st.session_state.total_qs = len(q_df)
-            del st.session_state['exam_active']; st.rerun()
+            st.session_state.final_score = score; st.session_state.total_qs = len(q_df); del st.session_state['exam_active']; st.rerun()
 
     elif 'final_score' in st.session_state:
         st.header(f"🏆 Score: {st.session_state.final_score} / {st.session_state.total_qs}")
-        if st.button("Back to Home"): del st.session_state['final_score']; st.rerun()
+        for i, row in st.session_state.quiz_data.iterrows():
+            with st.expander(f"Question {i+1} Review"):
+                st.write(row['question'])
+                st.write(f"**Correct Answer:** {row['correct_answer']}")
+                st.info(f"💡 Explanation: {row.get('explanation', 'Refer to textbook.')}")
+        if st.button("Restart"): del st.session_state['final_score']; st.rerun()
 
-# --- 4. PARENT PORTAL (With Remarks) ---
-elif role == "👪 Parent":
-    st.header("👪 Parent Dashboard")
-    child_query = st.text_input("Search Child's Name")
-    if child_query:
-        res = supabase.table("leaderboard").select("*").ilike("name", f"%{child_query}%").execute()
-        if res.data:
-            p_df = pd.DataFrame(res.data)
-            st.table(p_df[['name', 'score', 'remarks']])
-            st.info("💡 Tip: Use the Teacher portal for deeper diagnostic reports.")
-
-# --- 5. TEACHER PORTAL (With Detailed Filters) ---
-elif role == "👨‍🏫 Teacher":
-    st.header("👨‍🏫 Teacher Diagnostic Dashboard")
-    pin = st.text_input("Admin PIN", type="password")
-    if pin == "Lagos2026":
-        res = supabase.table("leaderboard").select("*").execute()
-        if res.data:
-            t_df = pd.DataFrame(res.data)
-            # Diagnostic Filtering
-            st.write("### 🔍 Filter Results")
-            f_school = st.selectbox("Filter by School", ["All"] + list(t_df['name'].str.split('|').str[0].unique()))
-            
-            display_df = t_df.copy()
-            if f_school != "All":
-                display_df = display_df[display_df['name'].str.contains(f_school)]
-            
-            st.dataframe(display_df[['name', 'score', 'remarks', 'created_at']], use_container_width=True)
-            st.download_button("📥 Download Excel Report", display_df.to_csv(index=False), "school_report.csv")
+# --- 4. TEACHER & PARENT PORTALS ---
+elif role in ["👪 Parent", "👨‍🏫 Teacher"]:
+    st.header(f"{role} Portal")
+    try:
+        res = supabase.table("leaderboard").select("*").order("created_at", desc=True).execute()
+        t_df = pd.DataFrame(res.data)
+        
+        if role == "👨‍🏫 Teacher":
+            if st.text_input("PIN", type="password") == "Lagos2026":
+                st.write("### 📊 Diagnostic Dashboard")
+                f_school = st.selectbox("School Filter", ["All"] + sorted(list(t_df['name'].str.split('|').str[0].unique())))
+                if f_school != "All": t_df = t_df[t_df['name'].str.contains(f_school)]
+                st.dataframe(t_df[['name', 'score', 'created_at']], use_container_width=True)
+                st.download_button("Download Report", t_df.to_csv(index=False), "results.csv")
+        
+        elif role == "👪 Parent":
+            child = st.text_input("Enter Child's Full Name")
+            if child and not t_df.empty:
+                match = t_df[t_df['name'].str.contains(child, case=False)]
+                st.table(match[['name', 'score', 'created_at']])
+    except: st.error("Refreshing database connection...")
