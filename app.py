@@ -1,5 +1,5 @@
 import streamlit as st
-import pd
+import pandas as pd
 import time
 from supabase import create_client, Client
 
@@ -51,18 +51,16 @@ if role == "✍️ Student":
         elapsed = time.time() - st.session_state.start_time
         remaining = max(0, 2400 - int(elapsed))
         
-        # --- TIMER & NAV ---
         c1, c2 = st.columns([3, 1])
         with c1: st.subheader(f"Question {st.session_state.current_q + 1} of {len(q_df)}")
         with c2: st.metric("⏳ Time", f"{remaining//60:02d}:{remaining%60:02d}")
 
-        # Navigation Grid
+        # Nav Grid
         grid = st.columns(10)
         for i in range(len(q_df)):
             with grid[i % 10]:
                 if st.button(f"{i+1}", key=f"n_{i}", type="primary" if i in st.session_state.user_answers else "secondary"):
-                    st.session_state.current_q = i
-                    st.rerun()
+                    st.session_state.current_q = i; st.rerun()
 
         st.divider()
         curr = st.session_state.current_q
@@ -74,41 +72,33 @@ if role == "✍️ Student":
         choice = st.radio("Select Answer:", opts, index=ans_idx, key=f"r_{curr}")
         if choice: st.session_state.user_answers[curr] = choice
 
-        # --- SUBMISSION ---
-        if st.button("🏁 FINISH & REVIEW RESULTS"):
+        if st.button("🏁 FINISH & SEE REVIEW"):
             score = sum(1 for i, r in q_df.iterrows() if st.session_state.user_answers.get(i) == r['correct_answer'])
             diag = f"School: {st.session_state.s_school} | Sub: {st.session_state.s_sub}"
-            try:
-                supabase.table("leaderboard").insert({"name": f"{st.session_state.s_name} || {diag}", "score": score}).execute()
+            try: supabase.table("leaderboard").insert({"name": f"{st.session_state.s_name} || {diag}", "score": score}).execute()
             except: pass
             st.session_state.final_score = score
             st.session_state.total_qs = len(q_df)
-            del st.session_state['exam_active']
-            st.rerun()
+            del st.session_state['exam_active']; st.rerun()
 
     elif 'final_score' in st.session_state:
-        st.header(f"🏆 Your Result: {st.session_state.final_score} / {st.session_state.total_qs}")
-        
-        # Personalized Remark
+        st.header(f"🏆 Result: {st.session_state.final_score} / {st.session_state.total_qs}")
         perc = st.session_state.final_score / st.session_state.total_qs
-        if perc >= 0.75: st.success("🌟 Excellent! You are highly ready for your exam.")
-        elif perc >= 0.5: st.warning("👍 Good effort! Review the corrections below to improve.")
-        else: st.error("📚 Don't be discouraged. Keep studying and focus on the explanations below.")
+        if perc >= 0.7: st.success("🌟 Great job! You are ready.")
+        else: st.warning("📚 Keep practicing! See corrections below.")
 
         st.subheader("📝 Correction & Explanation Screen")
         for i, row in st.session_state.quiz_data.iterrows():
             u_ans = st.session_state.user_answers.get(i, "No Answer")
             is_correct = u_ans == row['correct_answer']
-            
-            with st.expander(f"Question {i+1}: {'✅ Correct' if is_correct else '❌ Incorrect'}"):
-                st.write(f"**Question:** {row['question']}")
+            with st.expander(f"Q{i+1}: {'✅' if is_correct else '❌'}"):
+                st.write(f"**Q:** {row['question']}")
                 st.write(f"**Your Answer:** {u_ans}")
                 st.write(f"**Correct Answer:** {row['correct_answer']}")
-                st.info(f"💡 **Explanation:** {row.get('explanation', 'Consult your textbook for more details.')}")
+                st.info(f"💡 Explanation: {row.get('explanation', 'Review this topic in your notes.')}")
         
-        if st.button("Return to Login"):
-            for key in list(st.session_state.keys()): del st.session_state[key]
-            st.rerun()
+        if st.button("Return Home"):
+            st.session_state.clear(); st.rerun()
 
 # --- 4. TEACHER PORTAL ---
 elif role == "👨‍🏫 Teacher":
@@ -118,9 +108,17 @@ elif role == "👨‍🏫 Teacher":
             res = supabase.table("leaderboard").select("*").order("created_at", desc=True).execute()
             if res.data:
                 results = pd.DataFrame(res.data)
-                # Re-parse the diagnostic string carefully
-                results[['Student', 'Details']] = results['name'].str.split(' || ', expand=True)
+                # Robust split: handle rows that don't have ' || '
+                results['Student'] = results['name'].apply(lambda x: x.split(' || ')[0] if ' || ' in x else x)
+                results['Details'] = results['name'].apply(lambda x: x.split(' || ')[1] if ' || ' in x else "N/A")
                 st.dataframe(results[['Student', 'score', 'Details', 'created_at']], use_container_width=True)
-            else:
-                st.info("No students have submitted their exams yet.")
-        except: st.error("Database connection issue. Refreshing...")
+            else: st.info("No records found.")
+        except: st.error("Database connection busy.")
+
+# --- 5. PARENT PORTAL ---
+elif role == "👪 Parent":
+    st.header("👪 Parent Portal")
+    child = st.text_input("Enter Child's Full Name")
+    if child:
+        res = supabase.table("leaderboard").select("*").ilike("name", f"%{child}%").execute()
+        if res.data: st.table(pd.DataFrame(res.data)[['name', 'score', 'created_at']])
