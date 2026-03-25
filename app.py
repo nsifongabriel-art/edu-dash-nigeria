@@ -36,7 +36,7 @@ if role == "✍️ Student":
             
             c1, c2 = st.columns(2)
             with c1: subject = st.selectbox("Subject", subs)
-            with c2: year_p = st.selectbox("Exam Year", years)
+            with c2: year_p = st.selectbox("Year", years)
             exam_p = st.selectbox("Exam Type", ["JAMB", "WAEC", "NECO", "BECE"])
             
             if st.button("🚀 START EXAM"):
@@ -48,64 +48,86 @@ if role == "✍️ Student":
                     st.session_state.quiz_data = q_df.sample(n=min(len(q_df), 40)).reset_index(drop=True)
                     st.session_state.update({
                         "exam_active": True, "current_q": 0, "user_answers": {}, 
-                        "start_time": time.time(), "info": f"{school} | {name} | {subject} | {exam_p}"
+                        "start_time": time.time(), "student_name": name, "school": school, "subject": subject
                     })
                     st.rerun()
                 else: st.warning("No questions found for this selection.")
 
     elif 'exam_active' in st.session_state:
-        # ⏱️ 40 MINUTE TIMER
+        # 40 MINUTE TIMER
         elapsed = time.time() - st.session_state.start_time
-        remaining = max(0, 2400 - int(elapsed)) # 2400s = 40 mins
+        remaining = max(0, 2400 - int(elapsed))
         mins, secs = divmod(remaining, 60)
         st.metric("⏳ Time Remaining", f"{mins:02d}:{secs:02d}")
         
-        if remaining <= 0:
-            st.error("⏰ Time Expired! Submitting...")
-            # Auto-submit logic...
-        
         q_df, curr = st.session_state.quiz_data, st.session_state.current_q
-        row = q_df.iloc[curr]
         st.subheader(f"Question {curr+1} of {len(q_df)}")
-        st.write(row['question'])
-        st.session_state.user_answers[curr] = st.radio("Choose:", [row['a'], row['b'], row['c'], row['d']], key=f"q_{curr}")
+        st.write(q_df.iloc[curr]['question'])
+        st.session_state.user_answers[curr] = st.radio("Select Answer:", [q_df.iloc[curr]['a'], q_df.iloc[curr]['b'], q_df.iloc[curr]['c'], q_df.iloc[curr]['d']], key=f"q_{curr}")
         
         if st.button("Next ➡️") and curr < len(q_df)-1:
             st.session_state.current_q += 1; st.rerun()
         if st.button("🏁 FINISH"):
             score = sum(1 for i, r in q_df.iterrows() if st.session_state.user_answers.get(i) == r['correct_answer'])
+            wrong_topics = [r.get('topic', 'General Science') for i, r in q_df.iterrows() if st.session_state.user_answers.get(i) != r['correct_answer']]
+            
+            # Create a "Diagnostic String" for the database
+            diag = f"School: {st.session_state.school} | Subject: {st.session_state.subject} | Weak Areas: {', '.join(list(set(wrong_topics))[:3])}"
+            
             try:
-                supabase.table("leaderboard").insert({"name": st.session_state.info, "score": score}).execute()
+                supabase.table("leaderboard").insert({"name": f"{st.session_state.student_name} || {diag}", "score": score}).execute()
             except: pass
-            st.session_state.final_score = score; st.session_state.total_qs = len(q_df); del st.session_state['exam_active']; st.rerun()
+            
+            st.session_state.final_score = score
+            st.session_state.total_qs = len(q_df)
+            st.session_state.remarks = "Excellent work!" if score/len(q_df) >= 0.7 else "Don't give up, keep practicing!"
+            del st.session_state['exam_active']; st.rerun()
 
     elif 'final_score' in st.session_state:
+        st.balloons() if st.session_state.final_score/st.session_state.total_qs >= 0.7 else st.info("Keep going!")
         st.header(f"🏆 Score: {st.session_state.final_score} / {st.session_state.total_qs}")
-        for i, row in st.session_state.quiz_data.iterrows():
-            with st.expander(f"Question {i+1} Review"):
-                st.write(row['question'])
-                st.write(f"**Correct Answer:** {row['correct_answer']}")
-                st.info(f"💡 Explanation: {row.get('explanation', 'Refer to textbook.')}")
-        if st.button("Restart"): del st.session_state['final_score']; st.rerun()
+        st.subheader(f"Remark: {st.session_state.remarks}")
+        
+        with st.expander("📝 Review Your Script & Explanations"):
+            for i, row in st.session_state.quiz_data.iterrows():
+                st.write(f"**Q{i+1}:** {row['question']}")
+                st.write(f"Correct: {row['correct_answer']} | Yours: {st.session_state.user_answers.get(i)}")
+                st.caption(f"💡 {row.get('explanation', 'Consult your notes.')}")
+        if st.button("Home"): del st.session_state['final_score']; st.rerun()
 
-# --- 4. TEACHER & PARENT PORTALS ---
+# --- 4. PARENT & TEACHER PORTALS ---
 elif role in ["👪 Parent", "👨‍🏫 Teacher"]:
     st.header(f"{role} Portal")
     try:
         res = supabase.table("leaderboard").select("*").order("created_at", desc=True).execute()
-        t_df = pd.DataFrame(res.data)
+        raw_df = pd.DataFrame(res.data)
         
         if role == "👨‍🏫 Teacher":
             if st.text_input("PIN", type="password") == "Lagos2026":
-                st.write("### 📊 Diagnostic Dashboard")
-                f_school = st.selectbox("School Filter", ["All"] + sorted(list(t_df['name'].str.split('|').str[0].unique())))
-                if f_school != "All": t_df = t_df[t_df['name'].str.contains(f_school)]
-                st.dataframe(t_df[['name', 'score', 'created_at']], use_container_width=True)
-                st.download_button("Download Report", t_df.to_csv(index=False), "results.csv")
+                # Split the diagnostic string back into columns for the teacher
+                raw_df[['Student', 'Data']] = raw_df['name'].str.split(' || ', expand=True)
+                
+                selected_student = st.selectbox("Select a Student to Analyze", ["-- Select --"] + raw_df['Student'].tolist())
+                if selected_student != "-- Select --":
+                    row = raw_df[raw_df['Student'] == selected_student].iloc[0]
+                    st.write(f"### Analysis for {selected_student}")
+                    st.write(f"**Performance Details:** {row['Data']}")
+                    st.metric("Score", f"{row['score']}")
+                    
+                    if "Weak Areas" in row['Data']:
+                        st.error(f"🚩 Recommendation: Focus lessons on {row['Data'].split('Weak Areas: ')[1]}")
+                
+                st.divider()
+                st.write("### Full Class Record")
+                st.dataframe(raw_df[['Student', 'score', 'Data', 'created_at']])
         
         elif role == "👪 Parent":
-            child = st.text_input("Enter Child's Full Name")
-            if child and not t_df.empty:
-                match = t_df[t_df['name'].str.contains(child, case=False)]
-                st.table(match[['name', 'score', 'created_at']])
-    except: st.error("Refreshing database connection...")
+            child = st.text_input("Search Child's Name")
+            if child and not raw_df.empty:
+                match = raw_df[raw_df['name'].str.contains(child, case=False)]
+                if not match.empty:
+                    score_val = match.iloc[0]['score']
+                    st.write(f"### Result for {child}")
+                    st.metric("Score", score_val)
+                    st.info("🎯 Exam Readiness: " + ("High" if score_val >= 7 else "Practice Required"))
+    except: st.error("Database updating... please wait.")
