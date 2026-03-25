@@ -48,8 +48,11 @@ if role == "✍️ Student":
         q_df = st.session_state.quiz_data
         curr = st.session_state.current_q
         rem = max(0, 2400 - int(time.time() - st.session_state.start_time))
-        st.subheader(f"Q{curr+1} of {len(q_df)} | ⏳ {rem//60:02d}:{rem%60:02d}")
         
+        # Timer Warning
+        if rem < 300: st.error(f"⚠️ Hurry! Only {rem//60} minutes left!")
+        
+        st.subheader(f"Q{curr+1} of {len(q_df)} | ⏳ {rem//60:02d}:{rem%60:02d}")
         row = q_df.iloc[curr]
         st.write(f"### {row['question']}")
         opts = [row['a'], row['b'], row['c'], row['d']]
@@ -64,10 +67,10 @@ if role == "✍️ Student":
         else:
             if b3.button("🏁 FINISH", type="primary"):
                 score = sum(1 for i, r in q_df.iterrows() if st.session_state.user_answers.get(i) == r['correct_answer'])
-                # Package answers to store in DB (Teacher can read this later)
-                ans_summary = "|".join([f"{i}:{st.session_state.user_answers.get(i,'N/A')}" for i in range(len(q_df))])
-                full_name = f"{st.session_state.s_name} || {st.session_state.s_school} || {st.session_state.s_sub} || {ans_summary}"
-                try: supabase.table("leaderboard").insert({"name": full_name, "score": score}).execute()
+                # SCRIPT PACKAGING: Save as Question_Index:User_Answer
+                script_data = ";".join([f"{i}:{st.session_state.user_answers.get(i,'NA')}" for i in range(len(q_df))])
+                full_entry = f"{st.session_state.s_name} || {st.session_state.s_school} || {st.session_state.s_sub} || {script_data}"
+                try: supabase.table("leaderboard").insert({"name": full_entry, "score": score}).execute()
                 except: pass
                 st.session_state.final_score = score
                 st.session_state.total_qs = len(q_df)
@@ -77,77 +80,80 @@ if role == "✍️ Student":
         perc = (st.session_state.final_score / st.session_state.total_qs) * 100
         if perc >= 80: st.balloons(); st.success(f"🎉 EXCELLENT! Scored {perc:.0f}%")
         elif perc >= 50: st.info(f"👍 GOOD ATTEMPT! Scored {perc:.0f}%")
-        else: st.warning(f"📚 STUDY HARDER! Scored {perc:.0f}%")
+        else: st.warning(f"📚 KEEP STUDYING! Scored {perc:.0f}%")
 
         if st.button("🔄 RETAKE EXAM"):
             st.session_state.update({"exam_active": True, "current_q": 0, "user_answers": {}, "start_time": time.time()})
             del st.session_state['final_score']; st.rerun()
 
+        st.subheader("📝 Your Script Review")
         for i, row in st.session_state.quiz_data.iterrows():
             u_ans = st.session_state.user_answers.get(i, "None")
             with st.expander(f"Q{i+1}: {'✅' if u_ans == row['correct_answer'] else '❌'}"):
                 st.write(f"**Q:** {row['question']}\n**Correct:** {row['correct_answer']} | **Yours:** {u_ans}")
-                st.info(f"💡 AI Insight: {row.get('explanation', 'Review notes.')}")
+                st.info(f"💡 AI Insight: {row.get('explanation', 'No explanation provided.')}")
         
         if st.button("Logout"): st.session_state.clear(); st.rerun()
 
-# --- 4. TEACHER PORTAL (With Script View & Download) ---
+# --- 4. TEACHER PORTAL ---
 elif role == "👨‍🏫 Teacher":
-    st.header("👨‍🏫 Teacher Analytics Portal")
+    st.header("👨‍🏫 Teacher Analytics Dashboard")
     if st.text_input("PIN", type="password") == "Lagos2026":
         try:
-            response = supabase.table("leaderboard").select("*").order("created_at", desc=True).execute()
-            if response.data:
-                res_df = pd.DataFrame(response.data)
-                
-                # Split Logic (Safe)
-                def parse_data(val):
+            res = supabase.table("leaderboard").select("*").order("created_at", desc=True).execute()
+            if res.data:
+                res_df = pd.DataFrame(res.data)
+                def parse_all(val):
                     p = val.split(' || ')
-                    return p if len(p) >= 3 else [val, "N/A", "N/A", ""]
+                    return p if len(p) == 4 else [p[0], "N/A", "N/A", ""]
                 
-                meta = res_df['name'].apply(parse_data)
+                meta = res_df['name'].apply(parse_all)
                 res_df['Student'] = [m[0] for m in meta]
                 res_df['School'] = [m[1] for m in meta]
                 res_df['Subject'] = [m[2] for m in meta]
-                res_df['Raw_Answers'] = [m[3] if len(m)>3 else "" for m in meta]
+                res_df['Script_Raw'] = [m[3] for m in meta]
 
-                st.write("### 📊 All Results")
                 st.dataframe(res_df[['Student', 'School', 'Subject', 'score', 'created_at']], use_container_width=True)
                 
                 st.divider()
-                st.subheader("🔍 Student Script Deep Dive")
-                student_choice = st.selectbox("Select Student to Analyze Script", ["-- Choose --"] + res_df['Student'].unique().tolist())
+                target = st.selectbox("Select Student to Generate DOC Report", ["-- Select --"] + res_df['Student'].unique().tolist())
                 
-                if student_choice != "-- Choose --":
-                    s_row = res_df[res_df['Student'] == student_choice].iloc[0]
-                    st.write(f"#### Script for {student_choice}")
+                if target != "-- Select --":
+                    s_data = res_df[res_df['Student'] == target].iloc[0]
+                    st.success(f"Selected: {target}")
                     
-                    # Reconstruction for Download
-                    report_text = f"Student Performance Report\nName: {student_choice}\nSchool: {s_row['School']}\nSubject: {s_row['Subject']}\nScore: {s_row['score']}\n\n"
+                    # --- DOC FORMAT GENERATION (Plain Text Presentation) ---
+                    report_content = f"""VIKIDYLEDU PERFORMANCE REPORT
+---------------------------------------
+STUDENT NAME: {target}
+SCHOOL: {s_data['School']}
+SUBJECT: {s_data['Subject']}
+FINAL SCORE: {s_data['score']}
+DATE: {s_data['created_at']}
+---------------------------------------
+TEACHER'S REMARK: {'EXCELLENT - READY' if int(s_data['score']) > 7 else 'REMEDIAL REQUIRED'}
+---------------------------------------
+"""
+                    st.text_area("Report Preview", report_content, height=200)
                     
-                    # Displaying the "Script" (Summary)
-                    st.info(f"Summary: This student answered {s_row['score']} questions correctly.")
-                    
-                    # Download Button (CSV/Doc format)
-                    csv_data = s_row.to_frame().to_csv().encode('utf-8')
                     st.download_button(
-                        label="📥 Download Student Report (CSV)",
-                        data=csv_data,
-                        file_name=f"{student_choice}_report.csv",
-                        mime='text/csv',
+                        label="📥 Download Official Report (.DOC)",
+                        data=report_content,
+                        file_name=f"{target}_Report.doc",
+                        mime='application/msword'
                     )
-            else: st.info("No data yet.")
-        except Exception as e: st.error(f"Connection error. Please wait 5s.")
+            else: st.info("No submissions yet.")
+        except: st.error("Database connection busy. Please refresh.")
 
 # --- 5. PARENT PORTAL ---
 elif role == "👪 Parent":
     st.header("👪 Parent Access")
     child = st.text_input("Child's Full Name")
-    schl = st.text_input("Child's School")
-    if st.button("Search"):
+    schl = st.text_input("School Name")
+    if st.button("Search Result"):
         res = supabase.table("leaderboard").select("*").execute()
         matches = [r for r in res.data if child.lower() in r['name'].lower() and schl.lower() in r['name'].lower()]
         if matches:
-            st.success(f"Result found!")
+            st.success("Result found!")
             st.table(pd.DataFrame(matches)[['score', 'created_at']])
         else: st.error("No exact match found.")
