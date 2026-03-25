@@ -41,107 +41,114 @@ if role == "✍️ Student":
                 q_df = df[filt]
                 if not q_df.empty:
                     st.session_state.quiz_data = q_df.sample(n=min(len(q_df), 40)).reset_index(drop=True)
-                    # REDUCED TIME TO 30 MINUTES (1800 SECONDS)
-                    st.session_state.update({
-                        "exam_active": True, "current_q": 0, "user_answers": {}, 
-                        "expiry_time": time.time() + 1800, 
-                        "s_name": name, "s_school": school, "s_sub": subject
-                    })
+                    # TIMER FIX: Using a concrete timestamp
+                    st.session_state.expiry_time = time.time() + 1800 
+                    st.session_state.exam_active = True
+                    st.session_state.current_q = 0
+                    st.session_state.user_answers = {}
+                    st.session_state.s_info = {"name": name, "school": school, "sub": subject}
                     st.rerun()
 
-    elif 'exam_active' in st.session_state:
+    elif st.session_state.get('exam_active'):
         q_df = st.session_state.quiz_data
         curr = st.session_state.current_q
         
-        # FIXED TIMER LOGIC
+        # Timer Calculation
         rem = int(st.session_state.expiry_time - time.time())
         
         if rem <= 0:
-            st.error("⏰ Time is up! Auto-submitting...")
-            time.sleep(1)
-            # Auto-submit logic would go here, for now we trigger finish
-            rem = 0 
+            st.warning("⚠️ Time Expired! Please click Finish to save.")
+            rem = 0
 
-        st.subheader(f"Q{curr+1} of {len(q_df)} | ⏳ {max(0, rem)//60:02d}:{max(0, rem)%60:02d}")
+        st.subheader(f"Q{curr+1} of {len(q_df)} | ⏳ {rem//60:02d}:{rem%60:02d}")
         
         row = q_df.iloc[curr]
         st.write(f"### {row['question']}")
-        opts = [row['a'], row['b'], row['c'], row['d']]
-        ans_idx = opts.index(st.session_state.user_answers[curr]) if curr in st.session_state.user_answers else None
-        choice = st.radio("Select answer:", opts, index=ans_idx, key=f"q{curr}")
+        opts = [str(row['a']), str(row['b']), str(row['c']), str(row['d'])]
+        
+        # Radio selection
+        prev_ans = st.session_state.user_answers.get(curr)
+        idx = opts.index(prev_ans) if prev_ans in opts else None
+        choice = st.radio("Select answer:", opts, index=idx, key=f"q{curr}_{curr}")
         if choice: st.session_state.user_answers[curr] = choice
 
         st.divider()
-        st.write(f"📊 **Progress Tracker:** {len(st.session_state.user_answers)} / {len(q_df)} Answered")
+        st.write(f"📊 **Progress:** {len(st.session_state.user_answers)} / {len(q_df)} answered")
         
-        b1, b2, b3 = st.columns([1, 2, 1])
+        b1, b2, b3 = st.columns([1, 1, 1])
         if curr > 0: b1.button("⬅️ Back", on_click=lambda: st.session_state.update({"current_q": curr-1}))
         if curr < len(q_df)-1: b3.button("Next ➡️", on_click=lambda: st.session_state.update({"current_q": curr+1}))
-        else:
-            if b3.button("🏁 FINISH", type="primary") or rem <= 0:
-                score = 0
-                script_parts = []
-                for i, r in q_df.iterrows():
-                    u_ans = st.session_state.user_answers.get(i, "No Answer")
-                    is_right = "✅" if u_ans == r['correct_answer'] else "❌"
-                    if u_ans == r['correct_answer']: score += 1
-                    # NOW SAVING: Question + User Answer + Correct Answer
-                    script_parts.append(f"Q: {r['question']} | Your Ans: {u_ans} | Correct: {r['correct_answer']} ({is_right})")
-                
-                script_str = " ||| ".join(script_parts)
-                full_entry = f"{st.session_state.s_name} || {st.session_state.s_school} || {st.session_state.s_sub} || {script_str}"
-                
-                try: supabase.table("leaderboard").insert({"name": full_entry, "score": score}).execute()
-                except: pass
+        
+        if st.button("🏁 FINISH EXAM", type="primary", use_container_width=True):
+            score = 0
+            details = []
+            for i, r in q_df.iterrows():
+                u_ans = st.session_state.user_answers.get(i, "Skipped")
+                correct = str(r['correct_answer'])
+                mark = "✅" if u_ans == correct else "❌"
+                if u_ans == correct: score += 1
+                details.append(f"Q: {r['question']} | Ans: {u_ans} | Correct: {correct} ({mark})")
+            
+            script_str = " ||| ".join(details)
+            info = st.session_state.s_info
+            entry = f"{info['name']} || {info['school']} || {info['sub']} || {script_str}"
+            
+            try:
+                supabase.table("leaderboard").insert({"name": entry, "score": score}).execute()
                 st.session_state.final_score = score
                 st.session_state.total_qs = len(q_df)
-                del st.session_state['exam_active']; st.rerun()
+                st.session_state.exam_active = False
+                st.rerun()
+            except Exception as e:
+                st.error(f"Save Error: {e}")
 
     elif 'final_score' in st.session_state:
+        st.balloons()
         st.header(f"🏆 Score: {st.session_state.final_score} / {st.session_state.total_qs}")
-        if st.button("🔄 RETAKE"):
-            st.session_state.clear(); st.rerun()
-        if st.button("Logout"): st.session_state.clear(); st.rerun()
+        if st.button("🔄 Start New"):
+            st.session_state.clear()
+            st.rerun()
 
 # --- 4. TEACHER PORTAL ---
 elif role == "👨‍🏫 Teacher":
-    st.header("👨‍🏫 Teacher Diagnostic Dashboard")
+    st.header("👨‍🏫 Teacher Dashboard")
     if st.text_input("PIN", type="password") == "Lagos2026":
         try:
             res = supabase.table("leaderboard").select("*").order("created_at", desc=True).execute()
             if res.data:
-                res_df = pd.DataFrame(res.data)
-                def parse_data(val):
-                    p = val.split(' || ')
-                    return p if len(p) == 4 else [p[0], "N/A", "N/A", "Script missing"]
+                raw_df = pd.DataFrame(res.data)
                 
-                meta = res_df['name'].apply(parse_data)
-                res_df['Student'] = [m[0] for m in meta]
-                res_df['School'] = [m[1] for m in meta]
-                res_df['Subject'] = [m[2] for m in meta]
-                res_df['Full_Script'] = [m[3] for m in meta]
+                # Column Error Prevention
+                def safe_split(val):
+                    parts = str(val).split(" || ")
+                    return parts if len(parts) == 4 else [parts[0], "N/A", "N/A", "No Script"]
 
-                st.dataframe(res_df[['Student', 'School', 'Subject', 'score', 'created_at']], use_container_width=True)
+                parsed = raw_df['name'].apply(safe_split)
+                raw_df['Student'] = [p[0] for p in parsed]
+                raw_df['School'] = [p[1] for p in parsed]
+                raw_df['Subject'] = [p[2] for p in parsed]
+                raw_df['Full_Script'] = [p[3] for p in parsed]
+
+                st.dataframe(raw_df[['Student', 'School', 'Subject', 'score', 'created_at']])
                 
                 st.divider()
-                target = st.selectbox("Analyze Student Script", ["-- Select --"] + res_df['Student'].tolist())
-                if target != "-- Select --":
-                    s_row = res_df[res_df['Student'] == target].iloc[0]
-                    st.subheader(f"Detailed Marking for {target}")
-                    # DISPLAYING FULL QUESTIONS + ANSWERS
-                    st.text_area("Marked Script", s_row['Full_Script'].replace(" ||| ", "\n\n"), height=400)
+                pick = st.selectbox("View Student Script", raw_df['Student'].unique())
+                if pick:
+                    s_data = raw_df[raw_df['Student'] == pick].iloc[0]
+                    st.text_area("Marked Script", s_data['Full_Script'].replace(" ||| ", "\n\n"), height=300)
                     
-                    doc_txt = f"VIKIDYLEDU REPORT: {target}\nSCORE: {s_row['score']}\n\n{s_row['Full_Script'].replace(' ||| ', '\n\n')}"
-                    st.download_button("📥 Download DOC Report", doc_txt, f"{target}_Full_Script.doc", "application/msword")
-            else: st.info("No data.")
-        except: st.error("Database connection refresh...")
+                    doc_out = f"REPORT: {pick}\nSCORE: {s_data['score']}\n\n{s_data['Full_Script'].replace(' ||| ', '\n\n')}"
+                    st.download_button("📥 Download DOC", doc_out, f"{pick}.doc")
+        except: st.info("Loading results...")
 
 # --- 5. PARENT PORTAL ---
 elif role == "👪 Parent":
-    st.header("👪 Parent Access")
-    child = st.text_input("Student Name")
-    if st.button("Search"):
+    st.header("👪 Parent Portal")
+    child = st.text_input("Enter Child Name")
+    if child:
         res = supabase.table("leaderboard").select("*").execute()
+        # Filter logic that avoids KeyError
         matches = [r for r in res.data if child.lower() in r['name'].lower()]
-        if matches: st.table(pd.DataFrame(matches)[['score', 'created_at']])
-        else: st.error("Not found.")
+        if matches:
+            st.table(pd.DataFrame(matches)[['score', 'created_at']])
+        else: st.error("No record found.")
