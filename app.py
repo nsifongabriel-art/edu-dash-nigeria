@@ -46,7 +46,6 @@ if role == "✍️ Student":
                 st.rerun()
 
     elif st.session_state.get('exam_active'):
-        # SAFETY GUARD for Timer Error
         if 'expiry_time' in st.session_state:
             rem = int(st.session_state.expiry_time - time.time())
             if rem <= 0: rem = 0
@@ -77,6 +76,7 @@ if role == "✍️ Student":
                     if u_ans == correct: score += 1
                     full_script.append(f"{r['question']} | {u_ans} | {correct} | {mark}")
                 
+                # Database Entry Formatting
                 entry = f"{st.session_state.s_info['name']} || {st.session_state.s_info['school']} || {st.session_state.s_info['sub']} ({st.session_state.s_info['year']} {st.session_state.s_info['type']}) || {' ||| '.join(full_script)}"
                 supabase.table("leaderboard").insert({"name": entry, "score": score}).execute()
                 st.session_state.final_score = score
@@ -104,8 +104,8 @@ elif role == "👨‍🏫 Teacher":
         t_name = st.text_input("Student Name")
         t_school = st.text_input("School Name")
         
-        # Unique key added to prevent DuplicateElementId error
-        if st.button("🔍 Search Attempts", key="unique_teacher_search"):
+        # Search Button with unique key
+        if st.button("🔍 Search Attempts", key="main_search_btn"):
             res = supabase.table("leaderboard").select("*").execute()
             matches = [r for r in res.data if t_name.lower() in r['name'].lower() and t_school.lower() in r['name'].lower()]
             
@@ -116,10 +116,12 @@ elif role == "👨‍🏫 Teacher":
                     return p if len(p) == 4 else [p[0], "N/A", "N/A", ""]
                 raw_df['Student'], raw_df['School'], raw_df['Subject'], raw_df['Script'] = zip(*raw_df['name'].apply(parse))
                 raw_df['Display'] = raw_df['created_at'].apply(lambda x: x[:16].replace("T", " ")) + " - Score: " + raw_df['score'].astype(str)
+                # Store in session state to prevent refresh loops
                 st.session_state.teacher_results = raw_df
             else:
                 st.error("No attempts found.")
 
+        # Display results from Session State
         if 'teacher_results' in st.session_state:
             res_df = st.session_state.teacher_results
             st.success(f"Found {len(res_df)} attempts.")
@@ -135,9 +137,9 @@ elif role == "👨‍🏫 Teacher":
                     report_df = pd.DataFrame(items, columns=["Question Text", "Student Choice", "Correct Answer", "Result"])
                     st.table(report_df)
                     
-                    doc_content = f"REPORT: {s['Student']}\nSCORE: {s['score']}\n\n"
+                    doc_content = f"REPORT: {s['Student']}\nSCHOOL: {s['School']}\nSUB: {s['Subject']}\nSCORE: {s['score']}\n\n"
                     for i in items: doc_content += f"Q: {i[0]}\nAns: {i[1]} | Correct: {i[2]} ({i[3]})\n\n"
-                    st.download_button("📥 Download (.doc)", doc_content, f"{s['Student']}.doc", key="unique_dl_btn")
+                    st.download_button("📥 Download This Attempt (.doc)", doc_content, f"{s['Student']}_Report.doc", key="dl_btn_unique")
 
 # --- 5. PARENT PORTAL ---
 elif role == "👪 Parent":
