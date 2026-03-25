@@ -97,7 +97,7 @@ if role == "✍️ Student":
                 st.divider()
         if st.button("🔄 Restart"): st.session_state.clear(); st.rerun()
 
-# --- 4. TEACHER PORTAL (Fixed Search/Table Logic) ---
+# --- 4. TEACHER PORTAL (REPLACE YOUR OLD TEACHER SECTION WITH THIS) ---
 elif role == "👨‍🏫 Teacher":
     st.header("👨‍🏫 Teacher Portal")
     pin = st.text_input("PIN", type="password")
@@ -105,52 +105,68 @@ elif role == "👨‍🏫 Teacher":
         t_name = st.text_input("Student Name")
         t_school = st.text_input("School Name")
         
-        if st.button("🔍 Search Attempts") or 'teacher_results' in st.session_state:
-            # We cache the results in session state so selecting a dropdown doesn't clear the search
-            if st.button("🔍 Search Attempts"):
-                res = supabase.table("leaderboard").select("*").execute()
-                matches = [r for r in res.data if t_name.lower() in r['name'].lower() and t_school.lower() in r['name'].lower()]
-                if matches:
-                    raw_df = pd.DataFrame(matches)
-                    def parse(v):
-                        parts = str(v).split(" || ")
-                        return parts if len(parts) == 4 else [parts[0], "N/A", "N/A", ""]
-                    raw_df['Student'], raw_df['School'], raw_df['Subject'], raw_df['Script'] = zip(*raw_df['name'].apply(parse))
-                    raw_df['Display'] = raw_df['created_at'].apply(lambda x: x[:16].replace("T", " ")) + " - Score: " + raw_df['score'].astype(str)
-                    st.session_state.teacher_results = raw_df
-                else:
-                    st.error("No attempts found.")
-                    st.session_state.pop('teacher_results', None)
+        # This button triggers the search and stores results in session_state
+        if st.button("🔍 Search Attempts", key="teacher_search_btn"):
+            res = supabase.table("leaderboard").select("*").execute()
+            # Filter matches from the database
+            matches = [r for r in res.data if t_name.lower() in r['name'].lower() and t_school.lower() in r['name'].lower()]
+            
+            if matches:
+                raw_df = pd.DataFrame(matches)
+                def parse(v):
+                    parts = str(v).split(" || ")
+                    return parts if len(parts) == 4 else [parts[0], "N/A", "N/A", ""]
+                
+                raw_df['Student'], raw_df['School'], raw_df['Subject'], raw_df['Script'] = zip(*raw_df['name'].apply(parse))
+                raw_df['Display'] = raw_df['created_at'].apply(lambda x: x[:16].replace("T", " ")) + " - Score: " + raw_df['score'].astype(str)
+                
+                # We save this so the app remembers the list when you click the dropdown
+                st.session_state.teacher_results = raw_df
+            else:
+                st.error("No attempts found.")
+                if 'teacher_results' in st.session_state:
+                    del st.session_state.teacher_results
 
-            if 'teacher_results' in st.session_state:
-                res_df = st.session_state.teacher_results
-                st.success(f"Found {len(res_df)} attempts.")
+        # Only show the dropdown if a search has been performed successfully
+        if 'teacher_results' in st.session_state:
+            res_df = st.session_state.teacher_results
+            st.success(f"Found {len(res_df)} attempts.")
+            
+            selected_label = st.selectbox("Select specific attempt:", ["-- Select Attempt --"] + res_df['Display'].tolist())
+            
+            if selected_label != "-- Select Attempt --":
+                s = res_df[res_df['Display'] == selected_label].iloc[0]
                 
-                # DROPDOWN SELECT
-                selected_label = st.selectbox("Select specific attempt to view/download:", ["-- Select Attempt --"] + res_df['Display'].tolist())
-                
-                if selected_label != "-- Select Attempt --":
-                    s = res_df[res_df['Display'] == selected_label].iloc[0]
+                try:
+                    # Parsing the script into a table format
+                    items = [x.split(" | ") for x in s['Script'].split(" ||| ")]
+                    items = [i for i in items if len(i) == 4] 
                     
-                    # SAFETY DATA PARSING
-                    try:
-                        # Split by ||| first, then by |
-                        items = [x.split(" | ") for x in s['Script'].split(" ||| ")]
-                        # Filter out empty or broken lines
-                        items = [i for i in items if len(i) == 4]
+                    if items:
+                        st.markdown(f"### 📋 Script Table for {s['Student']}")
+                        report_df = pd.DataFrame(items, columns=["Question Text", "Student Choice", "Correct Answer", "Result"])
+                        st.table(report_df)
                         
-                        if items:
-                            st.markdown(f"### 📋 Script Table for {s['Student']}")
-                            report_df = pd.DataFrame(items, columns=["Question Text", "Student Choice", "Correct Answer", "Result"])
-                            st.table(report_df)
-                            
-                            doc_content = f"VIKIDYLEDU REPORT\nNAME: {s['Student']}\nSCHOOL: {s['School']}\nSUB: {s['Subject']}\nSCORE: {s['score']}\n\n"
-                            for i in items: doc_content += f"Q: {i[0]}\nAns: {i[1]} | Correct: {i[2]} ({i[3]})\n\n"
-                            st.download_button("📥 Download This Attempt (.doc)", doc_content, f"{s['Student']}_Report.doc")
+                        # Generate the Downloadable Content
+                        doc_content = f"REPORT: {s['Student']}\nSCHOOL: {s['School']}\nSUB: {s['Subject']}\nSCORE: {s['score']}\n\n"
+                        for i in items:
+                            doc_content += f"Q: {i[0]}\nAns: {i[1]} | Correct: {i[2]} ({i[3]})\n\n"
+                        
+                        st.download_button("📥 Download This Attempt (.doc)", doc_content, f"{s['Student']}_Report.doc")
+                except Exception as e:
+                    st.error("Format mismatch in this specific script.")
+
+# --- 5. PARENT PORTAL (Keep your existing Parent code below this) ---
+elif role == "👪 Parent":
+# ...
+💡 Why this works:
+In your previous version (the one that showed the DuplicateElementId error), the app was likely trying to run the search every time you interacted with the screen.
+
+By using st.session_state.teacher_results, we tell the app: "Perform the search once when the button is clicked, save the list in memory, and just show that list until I search again." This prevents the "Freezing" and the "Red Box" errors you were seeing.
+
+Would you like me to show you how to add a "Clear Search" button to refresh the Teacher's view?                           ("📥 Download This Attempt (.doc)", doc_content, f"{s['Student']}_Report.doc")
                         else:
                             st.warning("The script data for this attempt is in an old format or corrupted.")
-                    except:
-                        st.error("Error displaying this specific script.")
 
 # --- 5. PARENT PORTAL ---
 elif role == "👪 Parent":
