@@ -21,7 +21,6 @@ def load_sheet():
 with st.sidebar:
     st.title("VikidylEdu CBT")
     role = st.selectbox("Switch Portal", ["✍️ Student", "👨‍🏫 Teacher", "👪 Parent"])
-    st.info("Version 3.5: Excellence Edition")
 
 # --- 3. STUDENT PORTAL ---
 if role == "✍️ Student":
@@ -32,11 +31,8 @@ if role == "✍️ Student":
             name = st.text_input("Full Name")
             school = st.text_input("School Name")
             c1, c2 = st.columns(2)
-            with c1: 
-                subject = st.selectbox("Subject", sorted(df['subject'].unique().tolist()))
-            with c2: 
-                year = st.selectbox("Year", ["All Years"] + sorted(df['year'].unique().astype(str).tolist(), reverse=True))
-            
+            with c1: subject = st.selectbox("Subject", sorted(df['subject'].unique().tolist()))
+            with c2: year = st.selectbox("Year", ["All Years"] + sorted(df['year'].unique().astype(str).tolist(), reverse=True))
             exam_p = st.selectbox("Exam Type", ["JAMB", "WAEC", "NECO", "BECE"])
             
             if st.button("🚀 START EXAM"):
@@ -52,7 +48,6 @@ if role == "✍️ Student":
         q_df = st.session_state.quiz_data
         curr = st.session_state.current_q
         rem = max(0, 2400 - int(time.time() - st.session_state.start_time))
-        
         st.subheader(f"Q{curr+1} of {len(q_df)} | ⏳ {rem//60:02d}:{rem%60:02d}")
         
         row = q_df.iloc[curr]
@@ -69,7 +64,10 @@ if role == "✍️ Student":
         else:
             if b3.button("🏁 FINISH", type="primary"):
                 score = sum(1 for i, r in q_df.iterrows() if st.session_state.user_answers.get(i) == r['correct_answer'])
-                try: supabase.table("leaderboard").insert({"name": f"{st.session_state.s_name} || {st.session_state.s_school} || {st.session_state.s_sub}", "score": score}).execute()
+                # Package answers to store in DB (Teacher can read this later)
+                ans_summary = "|".join([f"{i}:{st.session_state.user_answers.get(i,'N/A')}" for i in range(len(q_df))])
+                full_name = f"{st.session_state.s_name} || {st.session_state.s_school} || {st.session_state.s_sub} || {ans_summary}"
+                try: supabase.table("leaderboard").insert({"name": full_name, "score": score}).execute()
                 except: pass
                 st.session_state.final_score = score
                 st.session_state.total_qs = len(q_df)
@@ -77,76 +75,79 @@ if role == "✍️ Student":
 
     elif 'final_score' in st.session_state:
         perc = (st.session_state.final_score / st.session_state.total_qs) * 100
-        
-        # --- NEW CELEBRATION LOGIC ---
-        if perc >= 80:
-            st.balloons()
-            st.success(f"🎉 EXCELLENT! You scored {perc:.0f}%. You are ready for the main exam!")
-        elif perc >= 50:
-            st.info(f"👍 GOOD ATTEMPT! You scored {perc:.0f}%. A little more study and you'll hit 90%!")
-        else:
-            st.warning(f"📚 STUDY HARDER! You scored {perc:.0f}%. Review the corrections below carefully.")
+        if perc >= 80: st.balloons(); st.success(f"🎉 EXCELLENT! Scored {perc:.0f}%")
+        elif perc >= 50: st.info(f"👍 GOOD ATTEMPT! Scored {perc:.0f}%")
+        else: st.warning(f"📚 STUDY HARDER! Scored {perc:.0f}%")
 
-        # --- RETAKE BUTTON ---
-        if st.button("🔄 RETAKE THIS EXAM"):
+        if st.button("🔄 RETAKE EXAM"):
             st.session_state.update({"exam_active": True, "current_q": 0, "user_answers": {}, "start_time": time.time()})
             del st.session_state['final_score']; st.rerun()
 
-        st.subheader("📝 Script Review & AI Insights")
         for i, row in st.session_state.quiz_data.iterrows():
             u_ans = st.session_state.user_answers.get(i, "None")
-            is_right = u_ans == row['correct_answer']
-            with st.expander(f"Q{i+1}: {'✅' if is_right else '❌'}"):
-                st.write(f"**Q:** {row['question']}")
-                st.write(f"**Correct:** {row['correct_answer']} | **Yours:** {u_ans}")
-                st.info(f"💡 **AI Insight:** {row.get('explanation', 'Consult your notes for this topic.')}")
+            with st.expander(f"Q{i+1}: {'✅' if u_ans == row['correct_answer'] else '❌'}"):
+                st.write(f"**Q:** {row['question']}\n**Correct:** {row['correct_answer']} | **Yours:** {u_ans}")
+                st.info(f"💡 AI Insight: {row.get('explanation', 'Review notes.')}")
         
         if st.button("Logout"): st.session_state.clear(); st.rerun()
 
-# --- 4. TEACHER PORTAL (Fixed Loading issues) ---
+# --- 4. TEACHER PORTAL (With Script View & Download) ---
 elif role == "👨‍🏫 Teacher":
-    st.header("👨‍🏫 Teacher Dashboard")
+    st.header("👨‍🏫 Teacher Analytics Portal")
     if st.text_input("PIN", type="password") == "Lagos2026":
         try:
-            # Direct fetch with no cache for instant results
             response = supabase.table("leaderboard").select("*").order("created_at", desc=True).execute()
             if response.data:
                 res_df = pd.DataFrame(response.data)
                 
-                # Safer parsing for rows that might be formatted differently
-                def parse_meta(val):
-                    parts = val.split(' || ')
-                    return parts if len(parts) == 3 else [val, "N/A", "N/A"]
-
-                meta = res_df['name'].apply(parse_meta)
+                # Split Logic (Safe)
+                def parse_data(val):
+                    p = val.split(' || ')
+                    return p if len(p) >= 3 else [val, "N/A", "N/A", ""]
+                
+                meta = res_df['name'].apply(parse_data)
                 res_df['Student'] = [m[0] for m in meta]
                 res_df['School'] = [m[1] for m in meta]
                 res_df['Subject'] = [m[2] for m in meta]
+                res_df['Raw_Answers'] = [m[3] if len(m)>3 else "" for m in meta]
 
-                st.write("### 📊 Live Results")
+                st.write("### 📊 All Results")
                 st.dataframe(res_df[['Student', 'School', 'Subject', 'score', 'created_at']], use_container_width=True)
                 
                 st.divider()
-                st.subheader("🔍 Individual Performance Script")
-                student_choice = st.selectbox("View analysis for:", ["-- Choose --"] + res_df['Student'].unique().tolist())
+                st.subheader("🔍 Student Script Deep Dive")
+                student_choice = st.selectbox("Select Student to Analyze Script", ["-- Choose --"] + res_df['Student'].unique().tolist())
+                
                 if student_choice != "-- Choose --":
-                    row = res_df[res_df['Student'] == student_choice].iloc[0]
-                    st.metric("Score", f"{row['score']}")
-                    st.write(f"**Subject:** {row['Subject']} | **School:** {row['School']}")
-                    st.write("Performance: " + ("Ready" if int(row['score']) > 7 else "Needs Improvement"))
-            else: st.info("No data available yet.")
-        except Exception as e:
-            st.error(f"Error connecting to data: {e}. Please refresh the page.")
+                    s_row = res_df[res_df['Student'] == student_choice].iloc[0]
+                    st.write(f"#### Script for {student_choice}")
+                    
+                    # Reconstruction for Download
+                    report_text = f"Student Performance Report\nName: {student_choice}\nSchool: {s_row['School']}\nSubject: {s_row['Subject']}\nScore: {s_row['score']}\n\n"
+                    
+                    # Displaying the "Script" (Summary)
+                    st.info(f"Summary: This student answered {s_row['score']} questions correctly.")
+                    
+                    # Download Button (CSV/Doc format)
+                    csv_data = s_row.to_frame().to_csv().encode('utf-8')
+                    st.download_button(
+                        label="📥 Download Student Report (CSV)",
+                        data=csv_data,
+                        file_name=f"{student_choice}_report.csv",
+                        mime='text/csv',
+                    )
+            else: st.info("No data yet.")
+        except Exception as e: st.error(f"Connection error. Please wait 5s.")
 
 # --- 5. PARENT PORTAL ---
 elif role == "👪 Parent":
     st.header("👪 Parent Access")
     child = st.text_input("Child's Full Name")
     schl = st.text_input("Child's School")
-    if st.button("Search Result"):
+    if st.button("Search"):
         res = supabase.table("leaderboard").select("*").execute()
         matches = [r for r in res.data if child.lower() in r['name'].lower() and schl.lower() in r['name'].lower()]
         if matches:
-            st.success(f"Result found for {child}")
+            st.success(f"Result found!")
             st.table(pd.DataFrame(matches)[['score', 'created_at']])
         else: st.error("No exact match found.")
