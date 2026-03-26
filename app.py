@@ -46,6 +46,7 @@ if role == "✍️ Student":
                 st.rerun()
 
     elif st.session_state.get('exam_active'):
+        # Timer Safety Guard
         if 'expiry_time' in st.session_state:
             rem = int(st.session_state.expiry_time - time.time())
             if rem <= 0: rem = 0
@@ -58,6 +59,7 @@ if role == "✍️ Student":
             st.write(f"### {row['question']}")
             opts = [str(row['a']), str(row['b']), str(row['c']), str(row['d'])]
             
+            # Radio Answer Persistence Fix
             def sync(): st.session_state.user_answers[curr] = st.session_state[f"r_{curr}"]
             st.radio("Select Answer:", opts, index=opts.index(st.session_state.user_answers[curr]) if curr in st.session_state.user_answers else None, key=f"r_{curr}", on_change=sync)
 
@@ -76,7 +78,6 @@ if role == "✍️ Student":
                     if u_ans == correct: score += 1
                     full_script.append(f"{r['question']} | {u_ans} | {correct} | {mark}")
                 
-                # Database Entry Formatting
                 entry = f"{st.session_state.s_info['name']} || {st.session_state.s_info['school']} || {st.session_state.s_info['sub']} ({st.session_state.s_info['year']} {st.session_state.s_info['type']}) || {' ||| '.join(full_script)}"
                 supabase.table("leaderboard").insert({"name": entry, "score": score}).execute()
                 st.session_state.final_score = score
@@ -104,7 +105,7 @@ elif role == "👨‍🏫 Teacher":
         t_name = st.text_input("Student Name")
         t_school = st.text_input("School Name")
         
-        # Search Button with unique key
+        # Unique Key Fix for DuplicateElementId error
         if st.button("🔍 Search Attempts", key="main_search_btn"):
             res = supabase.table("leaderboard").select("*").execute()
             matches = [r for r in res.data if t_name.lower() in r['name'].lower() and t_school.lower() in r['name'].lower()]
@@ -116,12 +117,11 @@ elif role == "👨‍🏫 Teacher":
                     return p if len(p) == 4 else [p[0], "N/A", "N/A", ""]
                 raw_df['Student'], raw_df['School'], raw_df['Subject'], raw_df['Script'] = zip(*raw_df['name'].apply(parse))
                 raw_df['Display'] = raw_df['created_at'].apply(lambda x: x[:16].replace("T", " ")) + " - Score: " + raw_df['score'].astype(str)
-                # Store in session state to prevent refresh loops
+                # Save to session state to prevent crashing on re-run
                 st.session_state.teacher_results = raw_df
             else:
                 st.error("No attempts found.")
 
-        # Display results from Session State
         if 'teacher_results' in st.session_state:
             res_df = st.session_state.teacher_results
             st.success(f"Found {len(res_df)} attempts.")
@@ -129,8 +129,20 @@ elif role == "👨‍🏫 Teacher":
             
             if selected_label != "-- Select --":
                 s = res_df[res_df['Display'] == selected_label].iloc[0]
+                
+                # --- DELETE OPTION ---
+                confirm_del = st.checkbox("Check to enable Delete button")
+                if confirm_del:
+                    if st.button("🗑️ DELETE THIS ATTEMPT", type="secondary"):
+                        supabase.table("leaderboard").delete().eq("id", s['id']).execute()
+                        st.success("Deleted!")
+                        del st.session_state.teacher_results
+                        time.sleep(1)
+                        st.rerun()
+
+                # --- SCRIPT TABLE DISPLAY ---
                 items = [x.split(" | ") for x in s['Script'].split(" ||| ")]
-                items = [i for i in items if len(i) == 4]
+                items = [i for i in items if len(i) == 4] # Safety filter for broken data
                 
                 if items:
                     st.markdown(f"### 📋 Script Table for {s['Student']}")
