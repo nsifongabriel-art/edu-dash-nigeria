@@ -45,7 +45,7 @@ with st.sidebar:
     st.title("VikidylEdu CBT")
     role = st.selectbox("Switch Portal", ["✍️ Student", "👨‍🏫 Teacher", "👪 Parent"])
 
-# --- 4. STUDENT PORTAL (UNCHANGED) ---
+# --- 4. STUDENT PORTAL ---
 if role == "✍️ Student":
     df = load_sheet()
     if 'exam_active' not in st.session_state and 'final_score' not in st.session_state:
@@ -60,7 +60,7 @@ if role == "✍️ Student":
             if st.button("🚀 START EXAM", use_container_width=True):
                 if name and school:
                     q_df = df[df['subject'] == subject].sample(n=min(40, len(df[df['subject'] == subject]))).reset_index(drop=True)
-                    st.session_state.update({"quiz_data": q_df, "expiry_time": time.time() + 1800, "exam_active": True, "current_q": 0, "user_answers": {}, "s_info": {"name": name, "school": school, "sub": subject}, "confirm_submit": False})
+                    st.session_state.update({"quiz_data": q_df, "expiry_time": time.time() + 1800, "exam_active": True, "current_q": 0, "user_answers": {}, "s_info": {"name": name, "school": school, "sub": subject, "type": exam_p}, "confirm_submit": False})
                     st.rerun()
     elif st.session_state.get('exam_active'):
         q_df, curr = st.session_state.quiz_data, st.session_state.current_q
@@ -80,14 +80,14 @@ if role == "✍️ Student":
             if st.button("🏁 FINISH EXAM", use_container_width=True): st.session_state.confirm_submit = True; st.rerun()
         else:
             un = len(q_df) - len(st.session_state.user_answers)
-            if un > 0: st.warning(f"⚠️ **REMARK:** {un} unattempted questions.")
+            if un > 0: st.warning(f"⚠️ **REMARK:** {un} questions remaining.")
             else: st.success("✅ **REMARK:** All questions answered.")
             cs1, cs2 = st.columns(2)
             if cs1.button("❌ Back", use_container_width=True): st.session_state.confirm_submit = False; st.rerun()
             if cs2.button("✅ Submit Result", type="primary", use_container_width=True) or rem <= 0:
                 score = sum(1 for i, r in q_df.iterrows() if st.session_state.user_answers.get(i) == str(r['correct_answer']))
                 script_list = [f"{r['question']} | {st.session_state.user_answers.get(i,'--')} | {r['correct_answer']} | {'✅' if st.session_state.user_answers.get(i)==str(r['correct_answer']) else '❌'}" for i, r in q_df.iterrows()]
-                entry = f"{st.session_state.s_info['name']} || {st.session_state.s_info['school']} || {st.session_state.s_info['sub']} || {' ||| '.join(script_list)}"
+                entry = f"{st.session_state.s_info['name']} || {st.session_state.s_info['school']} || {st.session_state.s_info['sub']} ({st.session_state.s_info['type']}) || {' ||| '.join(script_list)}"
                 supabase.table("leaderboard").insert({"name": entry, "score": score}).execute()
                 st.session_state.update({"review_data": script_list, "final_score": score, "exam_active": False}); st.rerun()
     elif 'final_score' in st.session_state:
@@ -103,33 +103,51 @@ if role == "✍️ Student":
             for k in ['quiz_data', 'expiry_time', 'exam_active', 'current_q', 'user_answers', 'final_score', 'confirm_submit', 'review_data']: st.session_state.pop(k, None)
             st.rerun()
 
-# --- 5. TEACHER PORTAL (FILTERED SEARCH) ---
+# --- 5. TEACHER PORTAL (PROFESSIONAL PRINTOUT) ---
 elif role == "👨‍🏫 Teacher":
     st.header("👨‍🏫 Teacher Dashboard")
     if st.text_input("PIN", type="password") == "Lagos2026":
         res = supabase.table("leaderboard").select("*").order("created_at", desc=True).execute()
         if res.data:
-            # SEARCH FUNCTIONALITY
             query = st.text_input("🔍 Search Student Name...")
             filtered = [r for r in res.data if query.lower() in r['name'].lower()]
-            
             if filtered:
-                selected = st.selectbox("Select Attempt to Analyze:", [f"{r['id']} - {r['name'].split(' || ')[0]} ({r['name'].split(' || ')[2]})" for r in filtered])
+                selected = st.selectbox("Select Attempt:", [f"{r['id']} - {r['name'].split(' || ')[0]} ({r['name'].split(' || ')[2]})" for r in filtered])
                 target = next(item for item in res.data if str(item['id']) in selected)
                 parts = target['name'].split(" || ")
-                
                 if len(parts) >= 4:
                     st.divider()
-                    st.subheader(f"Script Analysis: {parts[0]}")
+                    st.subheader(f"Analysis: {parts[0]}")
                     q_rows = [line.split(" | ") for line in parts[3].split(" ||| ")]
                     st.table(pd.DataFrame(q_rows, columns=["Question", "Student", "Correct", "Status"]))
                     
-                    # Print/Download Option
-                    csv = pd.DataFrame(q_rows).to_csv(index=False).encode('utf-8')
-                    st.download_button("📥 Download Script (DOC/CSV)", data=csv, file_name=f"{parts[0]}_Result.doc")
-            else: st.warning("No students found with that name.")
+                    # --- PROFESSIONAL DOC GENERATION ---
+                    report_html = f"""
+                    <html><body style="font-family: Arial, sans-serif; padding: 20px;">
+                    <div style="text-align: center; border-bottom: 2px solid black; padding-bottom: 10px;">
+                        <h1>VIKIDYLEDU EXAMINATION REPORT</h1>
+                        <p><i>Official Computer Based Test (CBT) Script</i></p>
+                    </div>
+                    <div style="margin-top: 20px;">
+                        <p><b>Student Name:</b> {parts[0]}</p>
+                        <p><b>School:</b> {parts[1]}</p>
+                        <p><b>Subject/Exam:</b> {parts[2]}</p>
+                        <p><b>Date of Attempt:</b> {target['created_at'][:10]}</p>
+                        <p style="font-size: 18px;"><b>Final Score:</b> {target['score']} / {len(q_rows)}</p>
+                    </div>
+                    <table border="1" style="width:100%; border-collapse: collapse; margin-top: 20px;">
+                        <tr style="background-color: #eee;">
+                            <th style="padding: 10px;">Question Text</th><th style="padding: 10px;">Student Answer</th><th style="padding: 10px;">Correct</th><th style="padding: 10px;">Result</th>
+                        </tr>
+                    """
+                    for q in q_rows:
+                        report_html += f"<tr><td style='padding:8px;'>{q[0]}</td><td style='padding:8px;'>{q[1]}</td><td style='padding:8px;'>{q[2]}</td><td style='padding:8px; text-align:center;'>{q[3]}</td></tr>"
+                    report_html += "</table></body></html>"
+                    
+                    st.download_button("📥 Download Professional DOC Report", data=report_html, file_name=f"{parts[0]}_Result.doc", mime="application/msword")
+            else: st.warning("No matches.")
 
-# --- 6. PARENT PORTAL (REALISTIC REMARKS) ---
+# --- 6. PARENT PORTAL ---
 elif role == "👪 Parent":
     st.header("👪 Parent Access")
     p_n = st.text_input("Child's Full Name")
@@ -139,10 +157,5 @@ elif role == "👪 Parent":
         if matches:
             for m in matches:
                 st.success(f"Subject: {m['name'].split(' || ')[2]} | Score: {m['score']}")
-                # REALISTIC REMARK LOGIC
-                if m['score'] == 0: r_text = "❌ Immediate revision required. The student did not get any questions right."
-                elif m['score'] < 15: r_text = "⚠️ Significant study needed. Student is currently performing below average."
-                elif m['score'] < 25: r_text = "📈 Average performance. There is room for improvement in specific topics."
-                else: r_text = "🌟 Excellent performance! The student is showing high readiness for exams."
+                r_text = "❌ Immediate revision required." if m['score'] == 0 else "🌟 Excellent performance!" if m['score'] > 25 else "📈 Showing steady progress."
                 st.info(f"**Remarks:** {r_text}")
-        else: st.error("No record found for this name.")
