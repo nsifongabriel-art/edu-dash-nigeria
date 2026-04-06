@@ -41,10 +41,6 @@ st.markdown("""
         border-bottom: 3px solid #ff4b4b;
         margin-bottom: 20px;
     }
-    @media print {
-        .no-print { display: none !important; }
-        .print-only { display: block !important; }
-    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -100,7 +96,6 @@ if role == "✍️ Student":
             st.write(f"### {row['question']}")
             opts = [str(row['a']), str(row['b']), str(row['c']), str(row['d'])]
             def sync(): st.session_state.user_answers[curr] = st.session_state[f"r_{curr}"]
-            
             st.radio("Answer:", opts, index=opts.index(st.session_state.user_answers[curr]) if curr in st.session_state.user_answers else None, key=f"r_{curr}", on_change=sync)
 
             st.divider()
@@ -111,7 +106,6 @@ if role == "✍️ Student":
             if st.button("🏁 FINISH EXAM", use_container_width=True) or (rem <= 0):
                 score = sum(1 for i, r in q_df.iterrows() if st.session_state.user_answers.get(i) == str(r['correct_answer']))
                 
-                # Format detailed script for Teacher to read later
                 detail_lines = []
                 for i, r in q_df.iterrows():
                     u = st.session_state.user_answers.get(i, "Skipped")
@@ -130,29 +124,62 @@ if role == "✍️ Student":
                 except: st.error("Save failed.")
 
     elif 'final_score' in st.session_state:
-        st.balloons()
         st.header(f"🏆 Score: {st.session_state.final_score} / {len(st.session_state.quiz_data)}")
         if st.button("🔄 New Exam", use_container_width=True): 
             for k in ['quiz_data', 'expiry_time', 'exam_active', 'current_q', 'user_answers', 'final_score']:
                 if k in st.session_state: del st.session_state[k]
             st.rerun()
 
-# --- 5. TEACHER PORTAL (RESTORED FEATURES) ---
+# --- 5. TEACHER PORTAL (FIXED SYNTAX) ---
 elif role == "👨‍🏫 Teacher":
     st.header("👨‍🏫 Teacher Dashboard")
     pin = st.text_input("Security PIN", type="password")
     
     if pin == "Lagos2026":
-        search_name = st.text_input("Search Student Name")
-        if st.button("🔍 Load Results"):
+        if st.button("🔍 Refresh All Results"):
             res = supabase.table("leaderboard").select("*").order("score", desc=True).execute()
             if res.data:
                 st.session_state.all_results = res.data
         
         if 'all_results' in st.session_state:
-            # 1. Global Ranking Table
             st.subheader("🌎 Global Ranking")
             rank_df = pd.DataFrame(st.session_state.all_results)
-            rank_df['Student'] = rank_df['name'].apply(lambda x: x.split(" || ")[0])
-            rank_df['Subject'] = rank_df['name'].apply(lambda x: x.split(" || ")[2] if "||" in x else "N/A")
-            st.dataframe(rank_
+            # Safe data processing
+            rank_df['Student'] = rank_df['name'].apply(lambda x: x.split(" || ")[0] if "||" in x else x)
+            rank_df['Subject'] = rank_df['name'].apply(lambda x: x.split(" || ")[2] if len(x.split(" || ")) > 2 else "N/A")
+            # Fixed the closing parenthesis here
+            st.dataframe(rank_df[['Student', 'Subject', 'score', 'created_at']], use_container_width=True)
+
+            st.divider()
+            st.subheader("📋 Student Script Analysis")
+            search_name = st.text_input("Enter Student Name to View Script")
+            
+            if search_name:
+                matches = [r for r in st.session_state.all_results if search_name.lower() in r['name'].lower()]
+                if matches:
+                    selected = st.selectbox("Select Attempt:", [f"{m['id']} - {m['name'].split(' || ')[0]}" for m in matches])
+                    target = [m for m in matches if f"{m['id']}" in selected][0]
+                    parts = target['name'].split(" || ")
+                    
+                    if len(parts) >= 4:
+                        st.success(f"Reviewing: {parts[0]} ({parts[2]})")
+                        q_data = [line.split(" | ") for line in parts[3].split(" ||| ")]
+                        analysis_df = pd.DataFrame(q_data, columns=["Question", "Student", "Correct", "Status"])
+                        st.table(analysis_df)
+                        
+                        wrong = len(analysis_df[analysis_df['Status'] == "❌"])
+                        st.info(f"👨‍🏫 Remark: Student missed {wrong} areas. Review the red '❌' marks above for correction.")
+                else:
+                    st.warning("No matches found for that name.")
+
+# --- 6. PARENT PORTAL ---
+elif role == "👪 Parent":
+    st.header("👪 Parent Access")
+    p_name = st.text_input("Child Name")
+    if st.button("Check Result"):
+        res = supabase.table("leaderboard").select("*").execute()
+        matches = [r for r in res.data if p_name.lower() in r['name'].lower()]
+        if matches:
+            for m in matches:
+                st.success(f"Subject: {m['name'].split(' || ')[2]} | Score: {m['score']} | Date: {m['created_at'][:10]}")
+        else: st.error("No record found.")
