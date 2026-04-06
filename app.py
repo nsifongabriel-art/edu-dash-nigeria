@@ -41,11 +41,9 @@ st.markdown("""
         border-bottom: 3px solid #ff4b4b;
         margin-bottom: 20px;
     }
-    .correction-box {
-        padding: 15px;
-        border-radius: 10px;
-        margin-bottom: 10px;
-        border: 1px solid #eee;
+    @media print {
+        .no-print { display: none !important; }
+        .print-only { display: block !important; }
     }
     </style>
     """, unsafe_allow_html=True)
@@ -87,103 +85,74 @@ if role == "✍️ Student":
                             "confirm_submit": False
                         })
                         st.rerun()
-                else: st.warning("Please enter your name and school.")
 
     elif st.session_state.get('exam_active'):
         q_df = st.session_state.quiz_data
         curr = st.session_state.current_q
         sub_title = st.session_state.s_info['sub']
-        
-        st.markdown(f'<div class="exam-header"><h2>📖 {sub_title.upper()} EXAMINATION</h2></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="exam-header"><h2>📖 {sub_title.upper()}</h2></div>', unsafe_allow_html=True)
 
         if 'expiry_time' in st.session_state:
             rem = int(st.session_state.expiry_time - time.time())
-            st.subheader(f"Question {curr+1} of {len(q_df)} | ⏳ {max(0, rem)//60:02d}:{max(0, rem)%60:02d}")
+            st.subheader(f"Q{curr+1}/{len(q_df)} | ⏳ {max(0, rem)//60:02d}:{max(0, rem)%60:02d}")
             
             row = q_df.iloc[curr]
             st.write(f"### {row['question']}")
-            
             opts = [str(row['a']), str(row['b']), str(row['c']), str(row['d'])]
             def sync(): st.session_state.user_answers[curr] = st.session_state[f"r_{curr}"]
             
-            st.radio("Select answer:", opts, 
-                     index=opts.index(st.session_state.user_answers[curr]) if curr in st.session_state.user_answers else None, 
-                     key=f"r_{curr}", on_change=sync)
+            st.radio("Answer:", opts, index=opts.index(st.session_state.user_answers[curr]) if curr in st.session_state.user_answers else None, key=f"r_{curr}", on_change=sync)
 
             st.divider()
             c1, c2, c3 = st.columns(3)
-            with c1:
-                if curr > 0:
-                    if st.button("⬅️ Previous", use_container_width=True):
-                        st.session_state.current_q -= 1
-                        st.rerun()
-            with c3:
-                if curr < len(q_df)-1:
-                    if st.button("Next ➡️", use_container_width=True):
-                        st.session_state.current_q += 1
-                        st.rerun()
-
-            if not st.session_state.get("confirm_submit"):
-                if st.button("🏁 FINISH EXAM", use_container_width=True):
-                    st.session_state.confirm_submit = True
-                    st.rerun()
-            else:
-                unattempted = len(q_df) - len(st.session_state.user_answers)
-                if unattempted > 0: st.warning(f"⚠️ **REMARK:** {unattempted} questions remaining.")
-                else: st.success("✅ Remark: All questions answered.")
+            if curr > 0: c1.button("⬅️ Previous", on_click=lambda: st.session_state.update({"current_q": curr-1}), use_container_width=True)
+            if curr < len(q_df)-1: c3.button("Next ➡️", on_click=lambda: st.session_state.update({"current_q": curr+1}), use_container_width=True)
+            
+            if st.button("🏁 FINISH EXAM", use_container_width=True) or (rem <= 0):
+                score = sum(1 for i, r in q_df.iterrows() if st.session_state.user_answers.get(i) == str(r['correct_answer']))
                 
-                col_sub1, col_sub2 = st.columns(2)
-                if col_sub1.button("❌ Back", use_container_width=True):
-                    st.session_state.confirm_submit = False
-                    st.rerun()
-                if col_sub2.button("✅ Submit", type="primary", use_container_width=True) or (rem <= 0):
-                    score = sum(1 for i, r in q_df.iterrows() if st.session_state.user_answers.get(i) == str(r['correct_answer']))
-                    
-                    # Store Results for Review
-                    review_data = []
-                    for i, r in q_df.iterrows():
-                        u_a = st.session_state.user_answers.get(i, "Skipped")
-                        c_a = str(r['correct_answer'])
-                        review_data.append({"q": r['question'], "u": u_a, "c": c_a, "res": "✅" if u_a == c_a else "❌"})
-                    
-                    st.session_state.review_list = review_data
+                # Format detailed script for Teacher to read later
+                detail_lines = []
+                for i, r in q_df.iterrows():
+                    u = st.session_state.user_answers.get(i, "Skipped")
+                    c = str(r['correct_answer'])
+                    res = "✅" if u == c else "❌"
+                    detail_lines.append(f"{r['question']} | {u} | {c} | {res}")
+                
+                script = " ||| ".join(detail_lines)
+                entry = f"{st.session_state.s_info['name']} || {st.session_state.s_info['school']} || {st.session_state.s_info['sub']} || {script}"
+                
+                try:
+                    supabase.table("leaderboard").insert({"name": entry, "score": score}).execute()
                     st.session_state.final_score = score
                     st.session_state.exam_active = False
                     st.rerun()
+                except: st.error("Save failed.")
 
     elif 'final_score' in st.session_state:
+        st.balloons()
         st.header(f"🏆 Score: {st.session_state.final_score} / {len(st.session_state.quiz_data)}")
-        
-        # --- CORRECTIONS & REMARKS SECTION ---
-        with st.expander("📝 VIEW CORRECTIONS & REMARKS", expanded=True):
-            for idx, item in enumerate(st.session_state.review_list):
-                color = "#d4edda" if item['res'] == "✅" else "#f8d7da"
-                st.markdown(f"""
-                    <div style="background-color:{color}; padding:10px; border-radius:5px; margin-bottom:10px; color:#333;">
-                        <strong>Q{idx+1}: {item['q']}</strong><br>
-                        Your Answer: {item['u']} | Correct: {item['c']} | {item['res']}
-                    </div>
-                """, unsafe_allow_html=True)
-
-        if st.button("🔄 Start New Exam", use_container_width=True): 
-            for k in ['quiz_data', 'expiry_time', 'exam_active', 'current_q', 'user_answers', 'final_score', 'confirm_submit', 'review_list']:
+        if st.button("🔄 New Exam", use_container_width=True): 
+            for k in ['quiz_data', 'expiry_time', 'exam_active', 'current_q', 'user_answers', 'final_score']:
                 if k in st.session_state: del st.session_state[k]
             st.rerun()
 
-# --- TEACHER & PARENT REMAIN UNCHANGED ---
+# --- 5. TEACHER PORTAL (RESTORED FEATURES) ---
 elif role == "👨‍🏫 Teacher":
-    st.header("Teacher Portal")
-    if st.text_input("PIN", type="password") == "Lagos2026":
-        t_n = st.text_input("Student Name")
-        if st.button("Search"):
-            res = supabase.table("leaderboard").select("*").execute()
-            st.session_state.teacher_results = pd.DataFrame([r for r in res.data if t_n.lower() in r['name'].lower()])
-        if 'teacher_results' in st.session_state: st.dataframe(st.session_state.teacher_results[['name', 'score', 'created_at']])
-
-elif role == "👪 Parent":
-    st.header("Parent Access")
-    p_n = st.text_input("Child Name")
-    if st.button("Check"):
-        res = supabase.table("leaderboard").select("*").execute()
-        for m in [r for r in res.data if p_n.lower() in r['name'].lower()]:
-            st.success(f"Score: {m['score']} ({m['created_at'][:10]})")
+    st.header("👨‍🏫 Teacher Dashboard")
+    pin = st.text_input("Security PIN", type="password")
+    
+    if pin == "Lagos2026":
+        search_name = st.text_input("Search Student Name")
+        if st.button("🔍 Load Results"):
+            res = supabase.table("leaderboard").select("*").order("score", desc=True).execute()
+            if res.data:
+                st.session_state.all_results = res.data
+        
+        if 'all_results' in st.session_state:
+            # 1. Global Ranking Table
+            st.subheader("🌎 Global Ranking")
+            rank_df = pd.DataFrame(st.session_state.all_results)
+            rank_df['Student'] = rank_df['name'].apply(lambda x: x.split(" || ")[0])
+            rank_df['Subject'] = rank_df['name'].apply(lambda x: x.split(" || ")[2] if "||" in x else "N/A")
+            st.dataframe(rank_
