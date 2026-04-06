@@ -23,35 +23,43 @@ def load_sheet():
         return data
     except: return None
 
-# --- 2. THE "CLEAN SCREEN" CSS ---
+# --- 2. THE "MINIMALIST" CSS (No Boxes) ---
 st.markdown("""
     <style>
-    /* Shrink the navigation buttons and remove forced padding */
-    [data-testid="column"] {
-        width: fit-content !important;
-        flex: unset !important;
-        min-width: 45px !important;
-    }
+    /* Remove borders, backgrounds, and shadows from navigation buttons */
     div[data-testid="column"] button {
-        width: 40px !important;
-        height: 40px !important;
-        padding: 0px !important;
-        margin: 2px !important;
-        font-size: 13px !important;
-        border-radius: 4px !important;
+        background: none !important;
+        border: none !important;
+        box-shadow: none !important;
+        color: #555 !important;
+        min-width: 35px !important;
+        width: 35px !important;
+        font-weight: normal !important;
+        text-decoration: none !important;
     }
-    /* Keep Action buttons (Start/Finish) large */
-    .stButton > button[kind="primary"] {
+    
+    /* Highlight the current question number */
+    div[data-testid="column"] button[kind="primary"] {
+        color: #ff4b4b !important;
+        font-weight: bold !important;
+        text-decoration: underline !important;
+        font-size: 18px !important;
+    }
+
+    /* Keep Finish and Start buttons looking like actual buttons */
+    .stButton > button[kind="primary"]:not([key^="nav_"]) {
+        background-color: #ff4b4b !important;
+        color: white !important;
+        border-radius: 8px !important;
         width: 100% !important;
-        height: 50px !important;
+        height: 45px !important;
+        text-decoration: none !important;
     }
-    /* Style for the passage area */
-    .passage-box {
-        background-color: #f0f2f6;
-        padding: 15px;
-        border-radius: 10px;
-        border-left: 5px solid #ff4b4b;
-        margin-bottom: 20px;
+    
+    .nav-label {
+        font-size: 14px;
+        color: #888;
+        margin-bottom: 10px;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -69,7 +77,7 @@ if role == "✍️ Student":
     if 'p_school' not in st.session_state: st.session_state.p_school = ""
 
     if 'exam_active' not in st.session_state and 'final_score' not in st.session_state:
-        st.header("✍️ Student Registration")
+        st.header("✍️ Registration")
         name = st.text_input("Full Name", value=st.session_state.p_name)
         school = st.text_input("School Name", value=st.session_state.p_school)
         
@@ -80,13 +88,10 @@ if role == "✍️ Student":
             with c3: exam_p = st.selectbox("Exam", ["JAMB", "WAEC", "NECO", "BECE"])
             
             if st.button("🚀 START EXAM", type="primary"):
-                if not name or not school:
-                    st.warning("Please enter your details.")
-                else:
+                if name and school:
                     st.session_state.p_name, st.session_state.p_school = name, school
                     limit = 50 if year == "All Years" else 40
                     q_df = df[df['subject'] == subject] if year == "All Years" else df[(df['subject'] == subject) & (df['year'].astype(str) == year)]
-                    
                     if not q_df.empty:
                         q_df = q_df.sample(n=min(limit, len(q_df))).reset_index(drop=True)
                         st.session_state.update({
@@ -95,49 +100,48 @@ if role == "✍️ Student":
                             "s_info": {"name": name, "school": school, "sub": subject, "year": year}
                         })
                         st.rerun()
+                else: st.warning("Enter name & school.")
 
     elif st.session_state.get('exam_active'):
         q_df = st.session_state.quiz_data
         curr = st.session_state.current_q
         
-        # --- HIDEABLE NAVIGATION ---
-        with st.expander("🎯 QUESTION MAP (Click to Open/Hide)", expanded=False):
-            # 7 columns works best for mobile width
-            nav_cols = st.columns(7) 
-            for i in range(len(q_df)):
-                with nav_cols[i % 7]:
-                    is_ans = i in st.session_state.user_answers
-                    # Show checkmark if answered, otherwise just number
-                    btn_label = f"✓{i+1}" if is_ans else f"{i+1}"
-                    if st.button(btn_label, key=f"nav_{i}", type="primary" if i == curr else "secondary"):
-                        st.session_state.current_q = i
-                        st.rerun()
+        # --- MINIMALIST TEXT NAVIGATION ---
+        st.markdown('<p class="nav-label">Jump to Question:</p>', unsafe_allow_html=True)
+        # Using 8 columns for a balanced text-only look
+        nav_cols = st.columns(8) 
+        for i in range(len(q_df)):
+            with nav_cols[i % 8]:
+                is_ans = i in st.session_state.user_answers
+                # We use a Green checkmark for answered, and plain text for others
+                label = f"✓{i+1}" if is_ans else f"{i+1}"
+                if st.button(label, key=f"nav_{i}", type="primary" if i == curr else "secondary"):
+                    st.session_state.current_q = i
+                    st.rerun()
+
+        st.divider()
 
         if 'expiry_time' in st.session_state:
             rem = int(st.session_state.expiry_time - time.time())
             st.subheader(f"Q{curr+1}/{len(q_df)} | ⏳ {max(0, rem)//60:02d}:{max(0, rem)%60:02d}")
             
             row = q_df.iloc[curr]
-            
-            # Display Question (and passage if exists)
-            st.markdown(f'<div class="passage-box"><b>{st.session_state.s_info["sub"]}</b><br>{row["question"]}</div>', unsafe_allow_html=True)
+            st.write(f"### {row['question']}")
             
             opts = [str(row['a']), str(row['b']), str(row['c']), str(row['d'])]
             def sync(): st.session_state.user_answers[curr] = st.session_state[f"r_{curr}"]
             
-            st.radio("Choose the correct option:", opts, 
+            st.radio("Select Answer:", opts, 
                      index=opts.index(st.session_state.user_answers[curr]) if curr in st.session_state.user_answers else None, 
                      key=f"r_{curr}", on_change=sync)
 
             st.divider()
-            c1, c2, c3 = st.columns([1, 1, 1])
-            if curr > 0: 
-                c1.button("⬅️ Previous", on_click=lambda: st.session_state.update({"current_q": curr-1}), use_container_width=True)
-            if curr < len(q_df)-1: 
-                c3.button("Next ➡️", on_click=lambda: st.session_state.update({"current_q": curr+1}), use_container_width=True)
+            c1, c2, c3 = st.columns(3)
+            if curr > 0: c1.button("⬅️ Back", on_click=lambda: st.session_state.update({"current_q": curr-1}), use_container_width=True)
+            if curr < len(q_df)-1: c3.button("Next ➡️", on_click=lambda: st.session_state.update({"current_q": curr+1}), use_container_width=True)
             
             st.write("")
-            if st.button("🏁 FINISH AND SUBMIT", type="primary", use_container_width=True) or (rem and rem <= 0):
+            if st.button("🏁 FINISH EXAM", type="primary", use_container_width=True) or (rem <= 0):
                 score = sum(1 for i, r in q_df.iterrows() if st.session_state.user_answers.get(i) == str(r['correct_answer']))
                 script = " ||| ".join([f"{r['question']} | {st.session_state.user_answers.get(i,'--')} | {r['correct_answer']} | {'✅' if st.session_state.user_answers.get(i)==str(r['correct_answer']) else '❌'}" for i, r in q_df.iterrows()])
                 entry = f"{st.session_state.s_info['name']} || {st.session_state.s_info['school']} || {st.session_state.s_info['sub']} || {script}"
@@ -146,17 +150,16 @@ if role == "✍️ Student":
                     st.session_state.final_score = score
                     st.session_state.exam_active = False
                     st.rerun()
-                except: st.error("Save failed. Check Internet.")
+                except: st.error("Save failed.")
 
     elif 'final_score' in st.session_state:
-        st.balloons()
         st.header(f"🏆 Score: {st.session_state.final_score} / {len(st.session_state.quiz_data)}")
-        if st.button("🔄 Start Another Subject", type="primary"): 
+        if st.button("🔄 Start New Exam", type="primary"): 
             for k in ['quiz_data', 'expiry_time', 'exam_active', 'current_q', 'user_answers', 'final_score']:
                 if k in st.session_state: del st.session_state[k]
             st.rerun()
 
-# --- 5. TEACHER/PARENT SECTIONS REMAIN UNCHANGED ---
+# --- 5. TEACHER & PARENT PORTALS ---
 elif role == "👨‍🏫 Teacher":
     st.header("👨‍🏫 Teacher Portal")
     if st.text_input("PIN", type="password") == "Lagos2026":
@@ -164,9 +167,7 @@ elif role == "👨‍🏫 Teacher":
         if st.button("🔍 Search"):
             res = supabase.table("leaderboard").select("*").execute()
             matches = [r for r in res.data if t_name.lower() in r['name'].lower()]
-            if matches:
-                st.session_state.teacher_results = pd.DataFrame(matches)
-            else: st.error("No results.")
+            if matches: st.session_state.teacher_results = pd.DataFrame(matches)
         if 'teacher_results' in st.session_state:
             st.dataframe(st.session_state.teacher_results[['name', 'score', 'created_at']])
 
