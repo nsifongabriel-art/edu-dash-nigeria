@@ -7,7 +7,13 @@ from supabase import create_client, Client
 # --- 1. CONNECTIONS ---
 URL = "https://tmbtnbxrrylulhgvnfjj.supabase.co"
 KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRtYnRuYnhycnlsdWxoZ3ZuZmpqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQxMDQ2ODcsImV4cCI6MjA4OTY4MDY4N30.Fd1TPTCjN2u-_EOmkkqOb3TAKW8Q5RGv0AtAA85jW4s"
-supabase: Client = create_client(URL, KEY)
+
+# Safe connection initialization
+try:
+    supabase: Client = create_client(URL, KEY)
+except Exception:
+    st.error("⚠️ Database connection failed. Please check your Supabase project status.")
+
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSeTbSBHxYsciOesGpXt6ATZm_5aWVHQrS7tIFIaibmU4MZU-otPRsxUXG4egEP7P7jXdtL6CHhytAw/pub?output=csv"
 
 @st.cache_data(ttl=10)
@@ -46,7 +52,6 @@ if role == "✍️ Student":
                 st.rerun()
 
     elif st.session_state.get('exam_active'):
-        # Timer Safety Guard
         if 'expiry_time' in st.session_state:
             rem = int(st.session_state.expiry_time - time.time())
             if rem <= 0: rem = 0
@@ -59,7 +64,6 @@ if role == "✍️ Student":
             st.write(f"### {row['question']}")
             opts = [str(row['a']), str(row['b']), str(row['c']), str(row['d'])]
             
-            # Radio Answer Persistence Fix
             def sync(): st.session_state.user_answers[curr] = st.session_state[f"r_{curr}"]
             st.radio("Select Answer:", opts, index=opts.index(st.session_state.user_answers[curr]) if curr in st.session_state.user_answers else None, key=f"r_{curr}", on_change=sync)
 
@@ -79,10 +83,15 @@ if role == "✍️ Student":
                     full_script.append(f"{r['question']} | {u_ans} | {correct} | {mark}")
                 
                 entry = f"{st.session_state.s_info['name']} || {st.session_state.s_info['school']} || {st.session_state.s_info['sub']} ({st.session_state.s_info['year']} {st.session_state.s_info['type']}) || {' ||| '.join(full_script)}"
-                supabase.table("leaderboard").insert({"name": entry, "score": score}).execute()
-                st.session_state.final_score = score
-                st.session_state.exam_active = False
-                st.rerun()
+                
+                # --- PROTECTION BLOCK ---
+                try:
+                    supabase.table("leaderboard").insert({"name": entry, "score": score}).execute()
+                    st.session_state.final_score = score
+                    st.session_state.exam_active = False
+                    st.rerun()
+                except Exception:
+                    st.error("📡 Connection Error: The database is currently unreachable. Please wait a minute and try again.")
 
     elif 'final_score' in st.session_state:
         st.balloons()
@@ -105,22 +114,23 @@ elif role == "👨‍🏫 Teacher":
         t_name = st.text_input("Student Name")
         t_school = st.text_input("School Name")
         
-        # Unique Key Fix for DuplicateElementId error
         if st.button("🔍 Search Attempts", key="main_search_btn"):
-            res = supabase.table("leaderboard").select("*").execute()
-            matches = [r for r in res.data if t_name.lower() in r['name'].lower() and t_school.lower() in r['name'].lower()]
-            
-            if matches:
-                raw_df = pd.DataFrame(matches)
-                def parse(v):
-                    p = str(v).split(" || ")
-                    return p if len(p) == 4 else [p[0], "N/A", "N/A", ""]
-                raw_df['Student'], raw_df['School'], raw_df['Subject'], raw_df['Script'] = zip(*raw_df['name'].apply(parse))
-                raw_df['Display'] = raw_df['created_at'].apply(lambda x: x[:16].replace("T", " ")) + " - Score: " + raw_df['score'].astype(str)
-                # Save to session state to prevent crashing on re-run
-                st.session_state.teacher_results = raw_df
-            else:
-                st.error("No attempts found.")
+            try:
+                res = supabase.table("leaderboard").select("*").execute()
+                matches = [r for r in res.data if t_name.lower() in r['name'].lower() and t_school.lower() in r['name'].lower()]
+                
+                if matches:
+                    raw_df = pd.DataFrame(matches)
+                    def parse(v):
+                        p = str(v).split(" || ")
+                        return p if len(p) == 4 else [p[0], "N/A", "N/A", ""]
+                    raw_df['Student'], raw_df['School'], raw_df['Subject'], raw_df['Script'] = zip(*raw_df['name'].apply(parse))
+                    raw_df['Display'] = raw_df['created_at'].apply(lambda x: x[:16].replace("T", " ")) + " - Score: " + raw_df['score'].astype(str)
+                    st.session_state.teacher_results = raw_df
+                else:
+                    st.error("No attempts found.")
+            except Exception:
+                st.error("📡 Database connection timed out. Please try again.")
 
         if 'teacher_results' in st.session_state:
             res_df = st.session_state.teacher_results
@@ -130,19 +140,20 @@ elif role == "👨‍🏫 Teacher":
             if selected_label != "-- Select --":
                 s = res_df[res_df['Display'] == selected_label].iloc[0]
                 
-                # --- DELETE OPTION ---
                 confirm_del = st.checkbox("Check to enable Delete button")
                 if confirm_del:
                     if st.button("🗑️ DELETE THIS ATTEMPT", type="secondary"):
-                        supabase.table("leaderboard").delete().eq("id", s['id']).execute()
-                        st.success("Deleted!")
-                        del st.session_state.teacher_results
-                        time.sleep(1)
-                        st.rerun()
+                        try:
+                            supabase.table("leaderboard").delete().eq("id", s['id']).execute()
+                            st.success("Deleted!")
+                            del st.session_state.teacher_results
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception:
+                            st.error("Could not reach database to delete.")
 
-                # --- SCRIPT TABLE DISPLAY ---
                 items = [x.split(" | ") for x in s['Script'].split(" ||| ")]
-                items = [i for i in items if len(i) == 4] # Safety filter for broken data
+                items = [i for i in items if len(i) == 4]
                 
                 if items:
                     st.markdown(f"### 📋 Script Table for {s['Student']}")
@@ -159,10 +170,13 @@ elif role == "👪 Parent":
     p_name = st.text_input("Child Name")
     p_school = st.text_input("School Name")
     if st.button("Check Result"):
-        res = supabase.table("leaderboard").select("*").execute()
-        matches = [r for r in res.data if p_name.lower() in r['name'].lower() and p_school.lower() in r['name'].lower()]
-        if matches:
-            for m in matches:
-                p = m['name'].split(" || ")
-                st.success(f"Date: {m['created_at'][:10]} | Subject: {p[2] if len(p)>2 else 'N/A'} | Score: {m['score']}")
-        else: st.error("No record found.")
+        try:
+            res = supabase.table("leaderboard").select("*").execute()
+            matches = [r for r in res.data if p_name.lower() in r['name'].lower() and p_school.lower() in r['name'].lower()]
+            if matches:
+                for m in matches:
+                    p = m['name'].split(" || ")
+                    st.success(f"Date: {m['created_at'][:10]} | Subject: {p[2] if len(p)>2 else 'N/A'} | Score: {m['score']}")
+            else: st.error("No record found.")
+        except Exception:
+            st.error("📡 Connection error. Please try again later.")
