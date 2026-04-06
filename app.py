@@ -27,21 +27,16 @@ def load_sheet():
 st.markdown("""
     <style>
     button[use_container_width="true"] {
-        background-color: #ff4b4b !important;
-        color: white !important;
-        border-radius: 8px !important;
-        height: 48px !important;
-        font-weight: bold !important;
+        background-color: #ff4b4b !important; color: white !important;
+        border-radius: 8px !important; height: 48px !important; font-weight: bold !important;
     }
     .exam-header {
-        background-color: #f0f2f6;
-        padding: 10px;
-        border-radius: 5px;
-        text-align: center;
-        border-bottom: 3px solid #ff4b4b;
-        margin-bottom: 20px;
+        background-color: #f0f2f6; padding: 10px; border-radius: 5px;
+        text-align: center; border-bottom: 3px solid #ff4b4b; margin-bottom: 20px;
     }
-    .question-text { font-size: 20px !important; line-height: 1.6; margin-bottom: 20px; }
+    .correction-card {
+        padding: 10px; border-radius: 5px; margin-bottom: 8px; border-left: 5px solid #ff4b4b;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -67,10 +62,9 @@ if role == "✍️ Student":
             
             if st.button("🚀 START EXAM", use_container_width=True):
                 if name and school:
-                    limit = 50 if year == "All Years" else 40
-                    q_df = df[df['subject'] == subject] if year == "All Years" else df[(df['subject'] == subject) & (df['year'].astype(str) == year)]
+                    q_df = df[df['subject'] == subject]
                     if not q_df.empty:
-                        q_df = q_df.sample(n=min(limit, len(q_df))).reset_index(drop=True)
+                        q_df = q_df.sample(n=min(40, len(q_df))).reset_index(drop=True)
                         st.session_state.update({
                             "quiz_data": q_df, "expiry_time": time.time() + 1800,
                             "exam_active": True, "current_q": 0, "user_answers": {},
@@ -81,17 +75,17 @@ if role == "✍️ Student":
 
     elif st.session_state.get('exam_active'):
         q_df, curr = st.session_state.quiz_data, st.session_state.current_q
-        st.markdown(f'<div class="exam-header"><h2>📖 {st.session_state.s_info["sub"].upper()}</h2></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="exam-header"><h2>📖 {st.session_state.s_info["sub"].upper()} EXAMINATION</h2></div>', unsafe_allow_html=True)
 
         rem = int(st.session_state.expiry_time - time.time())
-        st.subheader(f"Q{curr+1}/{len(q_df)} | ⏳ {max(0, rem)//60:02d}:{max(0, rem)%60:02d}")
+        st.subheader(f"Question {curr+1}/{len(q_df)} | ⏳ {max(0, rem)//60:02d}:{max(0, rem)%60:02d}")
         
         row = q_df.iloc[curr]
-        st.markdown(f'<div class="question-text">{row["question"]}</div>', unsafe_allow_html=True)
+        st.write(f"### {row['question']}")
         opts = [str(row['a']), str(row['b']), str(row['c']), str(row['d'])]
         
         def sync(): st.session_state.user_answers[curr] = st.session_state[f"r_{curr}"]
-        st.radio("Select Answer:", opts, index=opts.index(st.session_state.user_answers[curr]) if curr in st.session_state.user_answers else None, key=f"r_{curr}", on_change=sync)
+        st.radio("Your Answer:", opts, index=opts.index(st.session_state.user_answers[curr]) if curr in st.session_state.user_answers else None, key=f"r_{curr}", on_change=sync)
 
         st.divider()
         c1, _, c3 = st.columns(3)
@@ -100,20 +94,30 @@ if role == "✍️ Student":
         
         if not st.session_state.confirm_submit:
             if st.button("🏁 FINISH EXAM", use_container_width=True):
-                st.session_state.confirm_submit = True
-                st.rerun()
+                st.session_state.confirm_submit = True; st.rerun()
         else:
             un = len(q_df) - len(st.session_state.user_answers)
-            if un > 0: st.warning(f"⚠️ Remark: {un} questions skipped.")
-            else: st.success("✅ Remark: All questions answered.")
+            if un > 0: st.warning(f"⚠️ **REMARK:** You have {un} unattempted questions.")
+            else: st.success("✅ **REMARK:** All questions answered.")
             
             cs1, cs2 = st.columns(2)
             if cs1.button("❌ Back", use_container_width=True): st.session_state.confirm_submit = False; st.rerun()
             if cs2.button("✅ Submit Result", type="primary", use_container_width=True) or rem <= 0:
                 score = sum(1 for i, r in q_df.iterrows() if st.session_state.user_answers.get(i) == str(r['correct_answer']))
-                details = " ||| ".join([f"{r['question']} | {st.session_state.user_answers.get(i,'--')} | {r['correct_answer']} | {'✅' if st.session_state.user_answers.get(i)==str(r['correct_answer']) else '❌'}" for i, r in q_df.iterrows()])
-                entry = f"{st.session_state.s_info['name']} || {st.session_state.s_info['school']} || {st.session_state.s_info['sub']} || {details}"
+                
+                # Save Detailed Script for Review/Teacher
+                script_list = []
+                for i, r in q_df.iterrows():
+                    u_a = st.session_state.user_answers.get(i, "Skipped")
+                    c_a = str(r['correct_answer'])
+                    res_icon = "✅" if u_a == c_a else "❌"
+                    script_list.append(f"{r['question']} | {u_a} | {c_a} | {res_icon}")
+                
+                script_str = " ||| ".join(script_list)
+                entry = f"{st.session_state.s_info['name']} || {st.session_state.s_info['school']} || {st.session_state.s_info['sub']} || {script_str}"
                 supabase.table("leaderboard").insert({"name": entry, "score": score}).execute()
+                
+                st.session_state.review_data = script_list
                 st.session_state.final_score = score
                 st.session_state.exam_active = False
                 st.rerun()
@@ -121,44 +125,50 @@ if role == "✍️ Student":
     elif 'final_score' in st.session_state:
         st.header(f"🏆 Score: {st.session_state.final_score} / {len(st.session_state.quiz_data)}")
         
-        # --- AI READINESS REMARK ---
-        perc = (st.session_state.final_score / len(st.session_state.quiz_data)) * 100
-        if perc >= 70: remark = "🔥 **Ready!** Excellent mastery. You are fully prepared for the actual exam."
-        elif perc >= 50: remark = "📈 **Getting There.** Good effort, but review the topics you missed to hit the 70% mark."
-        else: remark = "📚 **More Study Needed.** Revisit the fundamentals. Practice makes perfect!"
-        st.info(f"🤖 **AI Readiness Remark:** {remark}")
+        # 1. Competiton Ranking
+        with st.expander("🌎 GLOBAL RANKING", expanded=False):
+            ranks = supabase.table("leaderboard").select("name, score").order("score", desc=True).limit(5).execute()
+            for r in ranks.data: st.write(f"🥇 {r['name'].split(' || ')[0]} - {r['score']} pts")
 
-        # --- GLOBAL RANKING FOR COMPETITION ---
-        st.subheader("🌎 Global Ranking (Top 10)")
-        res = supabase.table("leaderboard").select("name, score").order("score", desc=True).limit(10).execute()
-        if res.data:
-            ld_df = pd.DataFrame([{"Student": r['name'].split(" || ")[0], "Score": r['score']} for r in res.data])
-            st.table(ld_df)
+        # 2. Student Corrections (Learn from mistakes)
+        st.subheader("📚 Review Your Answers")
+        for line in st.session_state.review_data:
+            q, u, c, res = line.split(" | ")
+            bg = "#d4edda" if res == "✅" else "#f8d7da"
+            st.markdown(f'<div class="correction-card" style="background:{bg};"><b>Q: {q}</b><br>Your: {u} | Correct: {c} {res}</div>', unsafe_allow_html=True)
 
         if st.button("🔄 New Exam", use_container_width=True):
-            for k in ['quiz_data', 'expiry_time', 'exam_active', 'current_q', 'user_answers', 'final_score', 'confirm_submit']:
+            for k in ['quiz_data', 'expiry_time', 'exam_active', 'current_q', 'user_answers', 'final_score', 'confirm_submit', 'review_data']:
                 if k in st.session_state: del st.session_state[k]
             st.rerun()
 
 # --- 5. TEACHER PORTAL ---
 elif role == "👨‍🏫 Teacher":
-    st.header("Teacher Dashboard")
+    st.header("👨‍🏫 Teacher Dashboard")
     if st.text_input("PIN", type="password") == "Lagos2026":
         res = supabase.table("leaderboard").select("*").order("created_at", desc=True).execute()
         if res.data:
-            full_df = pd.DataFrame(res.data)
-            st.subheader("All Submissions")
-            st.dataframe(full_df[['name', 'score', 'created_at']], use_container_width=True)
+            selected = st.selectbox("Select Student Script:", [f"{r['id']} - {r['name'].split(' || ')[0]}" for r in res.data])
+            target = next(item for item in res.data if str(item['id']) in selected)
+            parts = target['name'].split(" || ")
             
-            # Print/Download
-            csv = full_df.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Download Results for Printing", data=csv, file_name="exam_results.csv", mime="text/csv")
+            if len(parts) >= 4:
+                st.info(f"Student: {parts[0]} | Score: {target['score']}")
+                q_rows = [line.split(" | ") for line in parts[3].split(" ||| ")]
+                analysis_df = pd.DataFrame(q_rows, columns=["Question", "Student Answer", "Correct", "Status"])
+                st.table(analysis_df)
+                
+                # DOC Download for Printing
+                doc_content = f"Student: {parts[0]}\nScore: {target['score']}\n\n" + analysis_df.to_string()
+                st.download_button("📥 Download/Print Script (DOC)", data=doc_content, file_name=f"{parts[0]}_Result.doc")
 
 # --- 6. PARENT PORTAL ---
 elif role == "👪 Parent":
-    st.header("Parent Access")
+    st.header("👪 Parent Access")
     p_n = st.text_input("Child Name")
     if st.button("Search"):
         res = supabase.table("leaderboard").select("*").execute()
         matches = [r for r in res.data if p_n.lower() in r['name'].lower()]
-        for m in matches: st.success(f"Score: {m['score']} - Date: {m['created_at'][:10]}")
+        for m in matches:
+            st.success(f"Subject: {m['name'].split(' || ')[2]} | Score: {m['score']}")
+            st.info(f"AI Readiness: Based on this {m['score']} score, your child is showing steady progress!")
