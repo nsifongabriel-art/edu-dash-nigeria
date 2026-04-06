@@ -8,11 +8,11 @@ from supabase import create_client, Client
 URL = "https://tmbtnbxrrylulhgvnfjj.supabase.co"
 KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRtYnRuYnhycnlsdWxoZ3ZuZmpqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQxMDQ2ODcsImV4cCI6MjA4OTY4MDY4N30.Fd1TPTCjN2u-_EOmkkqOb3TAKW8Q5RGv0AtAA85jW4s"
 
-# Safe connection initialization
+# Initialization with error handling
 try:
     supabase: Client = create_client(URL, KEY)
 except Exception:
-    st.error("⚠️ Database connection failed. Please check your Supabase project status.")
+    st.error("⚠️ Database connection failed. Please check Supabase.")
 
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSeTbSBHxYsciOesGpXt6ATZm_5aWVHQrS7tIFIaibmU4MZU-otPRsxUXG4egEP7P7jXdtL6CHhytAw/pub?output=csv"
 
@@ -84,14 +84,13 @@ if role == "✍️ Student":
                 
                 entry = f"{st.session_state.s_info['name']} || {st.session_state.s_info['school']} || {st.session_state.s_info['sub']} ({st.session_state.s_info['year']} {st.session_state.s_info['type']}) || {' ||| '.join(full_script)}"
                 
-                # --- PROTECTION BLOCK ---
                 try:
                     supabase.table("leaderboard").insert({"name": entry, "score": score}).execute()
                     st.session_state.final_score = score
                     st.session_state.exam_active = False
                     st.rerun()
                 except Exception:
-                    st.error("📡 Connection Error: The database is currently unreachable. Please wait a minute and try again.")
+                    st.error("📡 Connection Timeout: Database busy. Please wait a moment.")
 
     elif 'final_score' in st.session_state:
         st.balloons()
@@ -114,7 +113,8 @@ elif role == "👨‍🏫 Teacher":
         t_name = st.text_input("Student Name")
         t_school = st.text_input("School Name")
         
-        if st.button("🔍 Search Attempts", key="main_search_btn"):
+        # Fixed Button logic to prevent DuplicateElementId error
+        if st.button("🔍 Search Attempts", key="teacher_search_action"):
             try:
                 res = supabase.table("leaderboard").select("*").execute()
                 matches = [r for r in res.data if t_name.lower() in r['name'].lower() and t_school.lower() in r['name'].lower()]
@@ -130,7 +130,7 @@ elif role == "👨‍🏫 Teacher":
                 else:
                     st.error("No attempts found.")
             except Exception:
-                st.error("📡 Database connection timed out. Please try again.")
+                st.error("📡 Connection failed. Try again.")
 
         if 'teacher_results' in st.session_state:
             res_df = st.session_state.teacher_results
@@ -140,7 +140,8 @@ elif role == "👨‍🏫 Teacher":
             if selected_label != "-- Select --":
                 s = res_df[res_df['Display'] == selected_label].iloc[0]
                 
-                confirm_del = st.checkbox("Check to enable Delete button")
+                # Delete Attempt Logic
+                confirm_del = st.checkbox("Enable Delete button")
                 if confirm_del:
                     if st.button("🗑️ DELETE THIS ATTEMPT", type="secondary"):
                         try:
@@ -150,8 +151,9 @@ elif role == "👨‍🏫 Teacher":
                             time.sleep(1)
                             st.rerun()
                         except Exception:
-                            st.error("Could not reach database to delete.")
+                            st.error("Failed to delete record.")
 
+                # Table Rendering
                 items = [x.split(" | ") for x in s['Script'].split(" ||| ")]
                 items = [i for i in items if len(i) == 4]
                 
@@ -160,9 +162,9 @@ elif role == "👨‍🏫 Teacher":
                     report_df = pd.DataFrame(items, columns=["Question Text", "Student Choice", "Correct Answer", "Result"])
                     st.table(report_df)
                     
-                    doc_content = f"REPORT: {s['Student']}\nSCHOOL: {s['School']}\nSUB: {s['Subject']}\nSCORE: {s['score']}\n\n"
+                    doc_content = f"REPORT: {s['Student']}\nSCORE: {s['score']}\n\n"
                     for i in items: doc_content += f"Q: {i[0]}\nAns: {i[1]} | Correct: {i[2]} ({i[3]})\n\n"
-                    st.download_button("📥 Download This Attempt (.doc)", doc_content, f"{s['Student']}_Report.doc", key="dl_btn_unique")
+                    st.download_button("📥 Download (.doc)", doc_content, f"{s['Student']}_Report.doc", key="dl_unique")
 
 # --- 5. PARENT PORTAL ---
 elif role == "👪 Parent":
@@ -179,4 +181,4 @@ elif role == "👪 Parent":
                     st.success(f"Date: {m['created_at'][:10]} | Subject: {p[2] if len(p)>2 else 'N/A'} | Score: {m['score']}")
             else: st.error("No record found.")
         except Exception:
-            st.error("📡 Connection error. Please try again later.")
+            st.error("📡 Database busy.")
