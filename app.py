@@ -11,7 +11,7 @@ KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRt
 try:
     supabase: Client = create_client(URL, KEY)
 except Exception:
-    st.error("⚠️ Database connection failed. Please check Supabase.")
+    st.error("⚠️ Database connection failed.")
 
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSeTbSBHxYsciOesGpXt6ATZm_5aWVHQrS7tIFIaibmU4MZU-otPRsxUXG4egEP7P7jXdtL6CHhytAw/pub?output=csv"
 
@@ -31,47 +31,74 @@ with st.sidebar:
 # --- 3. STUDENT PORTAL ---
 if role == "✍️ Student":
     df = load_sheet()
+    
+    # Initialize persistent info if not present
+    if 'p_name' not in st.session_state: st.session_state.p_name = ""
+    if 'p_school' not in st.session_state: st.session_state.p_school = ""
+
     if 'exam_active' not in st.session_state and 'final_score' not in st.session_state:
         st.header("✍️ Student Registration")
-        name = st.text_input("Full Name")
-        school = st.text_input("School Name")
+        # Retain information from last session
+        name = st.text_input("Full Name", value=st.session_state.p_name)
+        school = st.text_input("School Name", value=st.session_state.p_school)
         
         if df is not None:
             c1, c2, c3 = st.columns(3)
             with c1: subject = st.selectbox("Subject", sorted(df['subject'].unique()))
-            # Added "All Years" to the dropdown
             with c2: year = st.selectbox("Year", ["All Years"] + sorted(df['year'].unique().astype(str), reverse=True))
             with c3: exam_p = st.selectbox("Exam", ["JAMB", "WAEC", "NECO", "BECE"])
             
             if st.button("🚀 START EXAM"):
-                # Filtering logic for "All Years" vs Specific Year
-                if year == "All Years":
-                    q_df = df[df['subject'] == subject]
-                    limit = 50 # Limit to 50 for All Years
+                if not name or not school:
+                    st.warning("Please enter your name and school.")
                 else:
-                    q_df = df[(df['subject'] == subject) & (df['year'].astype(str) == year)]
-                    limit = 40 # Standard limit for specific years
-                
-                if q_df.empty:
-                    st.warning(f"No questions found for {subject} in {year}. Please pick another.")
-                else:
-                    # Randomize and limit questions
-                    q_df = q_df.sample(n=min(limit, len(q_df))).reset_index(drop=True)
+                    # Save for next time
+                    st.session_state.p_name = name
+                    st.session_state.p_school = school
                     
-                    st.session_state.update({
-                        "quiz_data": q_df, "expiry_time": time.time() + 1800,
-                        "exam_active": True, "current_q": 0, "user_answers": {},
-                        "s_info": {"name": name, "school": school, "sub": subject, "year": year, "type": exam_p}
-                    })
-                    st.rerun()
+                    if year == "All Years":
+                        q_df = df[df['subject'] == subject]
+                        limit = 50
+                    else:
+                        q_df = df[(df['subject'] == subject) & (df['year'].astype(str) == year)]
+                        limit = 40
+                    
+                    if q_df.empty:
+                        st.warning(f"No questions found.")
+                    else:
+                        q_df = q_df.sample(n=min(limit, len(q_df))).reset_index(drop=True)
+                        st.session_state.update({
+                            "quiz_data": q_df, "expiry_time": time.time() + 1800,
+                            "exam_active": True, "current_q": 0, "user_answers": {},
+                            "s_info": {"name": name, "school": school, "sub": subject, "year": year, "type": exam_p}
+                        })
+                        st.rerun()
 
     elif st.session_state.get('exam_active'):
+        q_df = st.session_state.quiz_data
+        curr = st.session_state.current_q
+        
+        # --- NEW: QUESTION STATUS INDICATOR ---
+        st.write("### 🧭 Question Navigator")
+        cols = st.columns(10) # Display 10 numbers per row
+        for i in range(len(q_df)):
+            with cols[i % 10]:
+                # Color logic: Blue = Current, Green = Answered, Gray = Unanswered
+                if i == curr: btn_type = "primary"
+                elif i in st.session_state.user_answers: btn_type = "secondary" 
+                else: btn_type = "tertiary" # Note: Streamlit buttons don't support many colors, using logic for visual cues
+                
+                label = f"✅{i+1}" if i in st.session_state.user_answers else f"{i+1}"
+                if st.button(label, key=f"nav_{i}"):
+                    st.session_state.current_q = i
+                    st.rerun()
+        
+        st.divider()
+
         if 'expiry_time' in st.session_state:
             rem = int(st.session_state.expiry_time - time.time())
             if rem <= 0: rem = 0
             
-            q_df = st.session_state.quiz_data
-            curr = st.session_state.current_q
             st.subheader(f"Q{curr+1}/{len(q_df)} | ⏳ {max(0, rem)//60:02d}:{max(0, rem)%60:02d}")
             
             row = q_df.iloc[curr]
@@ -117,7 +144,11 @@ if role == "✍️ Student":
                 st.write(f"{'✅' if is_correct else '❌'} Your Ans: {u_ans} | Correct: {row['correct_answer']}")
                 st.info(f"💡 AI Insight: {row.get('explanation', 'Keep practicing!')}")
                 st.divider()
-        if st.button("🔄 Restart"): st.session_state.clear(); st.rerun()
+        # RESTART: Notice we don't clear st.session_state completely so name/school stays
+        if st.button("🔄 Restart"): 
+            for key in ['quiz_data', 'expiry_time', 'exam_active', 'current_q', 'user_answers', 'final_score', 's_info']:
+                if key in st.session_state: del st.session_state[key]
+            st.rerun()
 
 # --- 4. TEACHER PORTAL ---
 elif role == "👨‍🏫 Teacher":
@@ -152,7 +183,6 @@ elif role == "👨‍🏫 Teacher":
             if selected_label != "-- Select --":
                 s = res_df[res_df['Display'] == selected_label].iloc[0]
                 
-                # Delete logic for "Error in data" rows
                 if st.checkbox("Check to delete this record"):
                     if st.button("🗑️ DELETE PERMANENTLY"):
                         supabase.table("leaderboard").delete().eq("id", s['id']).execute()
