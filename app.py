@@ -8,7 +8,6 @@ from supabase import create_client, Client
 URL = "https://tmbtnbxrrylulhgvnfjj.supabase.co"
 KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRtYnRuYnhycnlsdWxoZ3ZuZmpqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQxMDQ2ODcsImV4cCI6MjA4OTY4MDY4N30.Fd1TPTCjN2u-_EOmkkqOb3TAKW8Q5RGv0AtAA85jW4s"
 
-# Initialization with error handling
 try:
     supabase: Client = create_client(URL, KEY)
 except Exception:
@@ -36,20 +35,35 @@ if role == "✍️ Student":
         st.header("✍️ Student Registration")
         name = st.text_input("Full Name")
         school = st.text_input("School Name")
+        
         if df is not None:
             c1, c2, c3 = st.columns(3)
             with c1: subject = st.selectbox("Subject", sorted(df['subject'].unique()))
-            with c2: year = st.selectbox("Year", sorted(df['year'].unique().astype(str), reverse=True))
+            # Added "All Years" to the dropdown
+            with c2: year = st.selectbox("Year", ["All Years"] + sorted(df['year'].unique().astype(str), reverse=True))
             with c3: exam_p = st.selectbox("Exam", ["JAMB", "WAEC", "NECO", "BECE"])
             
             if st.button("🚀 START EXAM"):
-                q_df = df[(df['subject'] == subject) & (df['year'].astype(str) == year)].sample(n=min(40, len(df))).reset_index(drop=True)
-                st.session_state.update({
-                    "quiz_data": q_df, "expiry_time": time.time() + 1800,
-                    "exam_active": True, "current_q": 0, "user_answers": {},
-                    "s_info": {"name": name, "school": school, "sub": subject, "year": year, "type": exam_p}
-                })
-                st.rerun()
+                # Filtering logic for "All Years" vs Specific Year
+                if year == "All Years":
+                    q_df = df[df['subject'] == subject]
+                    limit = 50 # Limit to 50 for All Years
+                else:
+                    q_df = df[(df['subject'] == subject) & (df['year'].astype(str) == year)]
+                    limit = 40 # Standard limit for specific years
+                
+                if q_df.empty:
+                    st.warning(f"No questions found for {subject} in {year}. Please pick another.")
+                else:
+                    # Randomize and limit questions
+                    q_df = q_df.sample(n=min(limit, len(q_df))).reset_index(drop=True)
+                    
+                    st.session_state.update({
+                        "quiz_data": q_df, "expiry_time": time.time() + 1800,
+                        "exam_active": True, "current_q": 0, "user_answers": {},
+                        "s_info": {"name": name, "school": school, "sub": subject, "year": year, "type": exam_p}
+                    })
+                    st.rerun()
 
     elif st.session_state.get('exam_active'):
         if 'expiry_time' in st.session_state:
@@ -82,7 +96,7 @@ if role == "✍️ Student":
                     if u_ans == correct: score += 1
                     full_script.append(f"{r['question']} | {u_ans} | {correct} | {mark}")
                 
-                entry = f"{st.session_state.s_info['name']} || {st.session_state.s_info['school']} || {st.session_state.s_info['sub']} ({st.session_state.s_info['year']} {st.session_state.s_info['type']}) || {' ||| '.join(full_script)}"
+                entry = f"{st.session_state.s_info['name']} || {st.session_state.s_info['school']} || {st.session_state.s_info['sub']} ({st.session_state.s_info['year']}) || {' ||| '.join(full_script)}"
                 
                 try:
                     supabase.table("leaderboard").insert({"name": entry, "score": score}).execute()
@@ -90,7 +104,7 @@ if role == "✍️ Student":
                     st.session_state.exam_active = False
                     st.rerun()
                 except Exception:
-                    st.error("📡 Connection Timeout: Database busy. Please wait a moment.")
+                    st.error("📡 Connection error. Result not saved.")
 
     elif 'final_score' in st.session_state:
         st.balloons()
@@ -113,8 +127,7 @@ elif role == "👨‍🏫 Teacher":
         t_name = st.text_input("Student Name")
         t_school = st.text_input("School Name")
         
-        # Fixed Button logic to prevent DuplicateElementId error
-        if st.button("🔍 Search Attempts", key="teacher_search_action"):
+        if st.button("🔍 Search Attempts", key="t_search_btn"):
             try:
                 res = supabase.table("leaderboard").select("*").execute()
                 matches = [r for r in res.data if t_name.lower() in r['name'].lower() and t_school.lower() in r['name'].lower()]
@@ -130,30 +143,24 @@ elif role == "👨‍🏫 Teacher":
                 else:
                     st.error("No attempts found.")
             except Exception:
-                st.error("📡 Connection failed. Try again.")
+                st.error("📡 Connection timed out.")
 
         if 'teacher_results' in st.session_state:
             res_df = st.session_state.teacher_results
-            st.success(f"Found {len(res_df)} attempts.")
             selected_label = st.selectbox("Select specific attempt:", ["-- Select --"] + res_df['Display'].tolist())
             
             if selected_label != "-- Select --":
                 s = res_df[res_df['Display'] == selected_label].iloc[0]
                 
-                # Delete Attempt Logic
-                confirm_del = st.checkbox("Enable Delete button")
-                if confirm_del:
-                    if st.button("🗑️ DELETE THIS ATTEMPT", type="secondary"):
-                        try:
-                            supabase.table("leaderboard").delete().eq("id", s['id']).execute()
-                            st.success("Deleted!")
-                            del st.session_state.teacher_results
-                            time.sleep(1)
-                            st.rerun()
-                        except Exception:
-                            st.error("Failed to delete record.")
+                # Delete logic for "Error in data" rows
+                if st.checkbox("Check to delete this record"):
+                    if st.button("🗑️ DELETE PERMANENTLY"):
+                        supabase.table("leaderboard").delete().eq("id", s['id']).execute()
+                        st.success("Deleted!")
+                        del st.session_state.teacher_results
+                        time.sleep(1)
+                        st.rerun()
 
-                # Table Rendering
                 items = [x.split(" | ") for x in s['Script'].split(" ||| ")]
                 items = [i for i in items if len(i) == 4]
                 
@@ -164,7 +171,7 @@ elif role == "👨‍🏫 Teacher":
                     
                     doc_content = f"REPORT: {s['Student']}\nSCORE: {s['score']}\n\n"
                     for i in items: doc_content += f"Q: {i[0]}\nAns: {i[1]} | Correct: {i[2]} ({i[3]})\n\n"
-                    st.download_button("📥 Download (.doc)", doc_content, f"{s['Student']}_Report.doc", key="dl_unique")
+                    st.download_button("📥 Download (.doc)", doc_content, f"{s['Student']}_Report.doc", key="dl_btn")
 
 # --- 5. PARENT PORTAL ---
 elif role == "👪 Parent":
