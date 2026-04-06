@@ -26,7 +26,7 @@ def load_sheet():
 # --- 2. CUSTOM CSS ---
 st.markdown("""
     <style>
-    /* Professional styling for buttons and passages */
+    /* Professional styling for buttons and headers */
     button[use_container_width="true"] {
         background-color: #ff4b4b !important;
         color: white !important;
@@ -34,14 +34,18 @@ st.markdown("""
         height: 48px !important;
         font-weight: bold !important;
     }
-    .stRadio > label {
-        font-size: 18px !important;
-        font-weight: bold !important;
+    .exam-header {
+        background-color: #f0f2f6;
+        padding: 10px;
+        border-radius: 5px;
+        text-align: center;
+        border-bottom: 3px solid #ff4b4b;
+        margin-bottom: 20px;
     }
-    /* Adds padding to the question for better readability */
     .question-text {
         font-size: 20px !important;
         line-height: 1.6;
+        margin-top: 15px;
         margin-bottom: 20px;
     }
     </style>
@@ -89,7 +93,11 @@ if role == "✍️ Student":
     elif st.session_state.get('exam_active'):
         q_df = st.session_state.quiz_data
         curr = st.session_state.current_q
+        sub_title = st.session_state.s_info['sub']
         
+        # --- FIXED SUBJECT HEADER ---
+        st.markdown(f'<div class="exam-header"><h2>📖 {sub_title.upper()} EXAMINATION</h2></div>', unsafe_allow_html=True)
+
         if 'expiry_time' in st.session_state:
             rem = int(st.session_state.expiry_time - time.time())
             st.subheader(f"Question {curr+1} of {len(q_df)} | ⏳ {max(0, rem)//60:02d}:{max(0, rem)%60:02d}")
@@ -113,7 +121,7 @@ if role == "✍️ Student":
             
             st.write("")
             
-            # --- SUBMIT LOGIC WITH REMARK BOX ---
+            # --- SUBMIT LOGIC WITH REMARK ---
             if not st.session_state.get("confirm_submit"):
                 if st.button("🏁 FINISH EXAM", use_container_width=True):
                     st.session_state.confirm_submit = True
@@ -121,17 +129,16 @@ if role == "✍️ Student":
             else:
                 unattempted = len(q_df) - len(st.session_state.user_answers)
                 if unattempted > 0:
-                    st.warning(f"⚠️ **REMARK:** You have **{unattempted}** unattempted questions remaining.")
+                    st.warning(f"⚠️ **REMARK:** You have **{unattempted}** questions remaining. Do you really want to finish?")
                 else:
-                    st.success("✅ All questions have been attempted.")
+                    st.success("✅ Remark: All questions answered.")
                 
-                st.write("Are you sure you want to submit your final answers?")
                 col_sub1, col_sub2 = st.columns(2)
-                if col_sub1.button("❌ No, Go Back", use_container_width=True):
+                if col_sub1.button("❌ No, Back to Exam", use_container_width=True):
                     st.session_state.confirm_submit = False
                     st.rerun()
                 
-                if col_sub2.button("✅ Yes, Submit Now", type="primary", use_container_width=True) or (rem <= 0):
+                if col_sub2.button("✅ Yes, Submit Result", type="primary", use_container_width=True) or (rem <= 0):
                     score = sum(1 for i, r in q_df.iterrows() if st.session_state.user_answers.get(i) == str(r['correct_answer']))
                     script = " ||| ".join([f"{r['question']} | {st.session_state.user_answers.get(i,'--')} | {r['correct_answer']} | {'✅' if st.session_state.user_answers.get(i)==str(r['correct_answer']) else '❌'}" for i, r in q_df.iterrows()])
                     entry = f"{st.session_state.s_info['name']} || {st.session_state.s_info['school']} || {st.session_state.s_info['sub']} || {script}"
@@ -140,21 +147,21 @@ if role == "✍️ Student":
                         st.session_state.final_score = score
                         st.session_state.exam_active = False
                         st.rerun()
-                    except: st.error("Save failed. Please check internet connection.")
+                    except: st.error("Network issue. Please try submitting again.")
 
     elif 'final_score' in st.session_state:
-        st.header(f"🏆 Score: {st.session_state.final_score} / {len(st.session_state.quiz_data)}")
-        if st.button("🔄 Start New Exam", use_container_width=True): 
+        st.header(f"🏆 Final Score: {st.session_state.final_score} / {len(st.session_state.quiz_data)}")
+        if st.button("🔄 Take Another Subject", use_container_width=True): 
             for k in ['quiz_data', 'expiry_time', 'exam_active', 'current_q', 'user_answers', 'final_score', 'confirm_submit']:
                 if k in st.session_state: del st.session_state[k]
             st.rerun()
 
-# --- 5. TEACHER & PARENT (Kept original logic) ---
+# --- 5. TEACHER & PARENT PORTALS ---
 elif role == "👨‍🏫 Teacher":
     st.header("👨‍🏫 Teacher Portal")
     if st.text_input("PIN", type="password") == "Lagos2026":
         t_name = st.text_input("Student Name")
-        if st.button("🔍 Search"):
+        if st.button("🔍 Search Attempts"):
             res = supabase.table("leaderboard").select("*").execute()
             matches = [r for r in res.data if t_name.lower() in r['name'].lower()]
             if matches: st.session_state.teacher_results = pd.DataFrame(matches)
